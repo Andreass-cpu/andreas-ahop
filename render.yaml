@@ -1,0 +1,28 @@
+services:
+  - type: web
+    name: vesta-fashion-python
+    runtime: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn app:app --workers 2 --threads 4 --timeout 120
+    healthCheckPath: /health
+    envVars:
+      - key: MONGODB_URI
+        sync: false
+      - key: MONGO_DB_NAME
+        value: vesta_fashion
+      - key: SECRET_KEY
+        generateValue: true
+      - key: ADMIN_USERNAME
+        value: admin
+      - key: ADMIN_PASSWORD
+        sync: false
+      - key: STORE_NAME
+        value: VESTA
+      - key: CURRENCY
+        value: mxn
+      - key: COOKIE_SECURE
+        value: "true"
+      - key: STRIPE_SECRET_KEY
+        sync: false
+      - key: STRIPE_WEBHOOK_SECRET
+        sync: false
