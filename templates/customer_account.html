@@ -1,0 +1,22 @@
+{% extends 'base.html' %}
+{% block title %}Mi cuenta — {{ store_name }}{% endblock %}
+{% block head %}<link rel="stylesheet" href="{{ url_for('static', filename='account.css') }}">{% endblock %}
+{% block content %}
+<header class="topbar account-topbar"><a class="brand" href="{{ url_for('index') }}">{{ store_name }}<span>.</span></a><div class="account-nav"><a href="{{ url_for('index') }}">Seguir comprando</a><a class="account-logout" href="{{ url_for('customer_logout') }}">Cerrar sesión</a></div></header>
+<main class="account-dashboard">
+  <section class="account-welcome"><span class="eyebrow">TU ESPACIO VESTA</span><h1>Hola, <em>{{ user.get('name','Cliente').split(' ')[0] }}.</em></h1><p>Desde aquí puedes revisar las compras que realizaste con esta cuenta.</p><div class="account-email"><span>Correo de tu cuenta</span><strong>{{ user.get('email','') }}</strong></div></section>
+  {% if db_error %}<div class="database-warning">{{ db_error }}</div>{% endif %}
+  <section class="account-orders"><div class="account-section-heading"><div><span class="eyebrow">TU HISTORIAL</span><h2>Mis <em>compras.</em></h2></div><span class="orders-count">{{ orders|length }} pedido(s)</span></div>
+  {% if orders %}
+    {% for o in orders %}
+    <article class="account-order"><div class="account-order-head"><div><span class="order-label">PEDIDO</span><strong>{{ o.number }}</strong><small>{{ o.created_at[:16].replace('T',' ') }}</small></div><div class="account-order-status status-{{ o.status }}">{{ {'received':'Recibido','processing':'Preparando','shipped':'Enviado','delivered':'Entregado','cancelled':'Cancelado','pending_payment':'Pago pendiente'}.get(o.status,o.status) }}</div></div>
+      <div class="account-order-items">{% for item in o.items %}<div class="account-order-item">{% if item.image %}<img src="{{ item.image }}" alt="{{ item.name }}" onerror="this.style.display='none'">{% endif %}<div><strong>{{ item.name }}</strong><small>Cantidad: {{ item.quantity }} · Talla: {{ item.size }} · Color: {{ item.color }}</small></div><span>${{ '%.2f'|format(item.line_total|default(item.price * item.quantity)) }}</span></div>{% endfor %}</div>
+      <div class="account-order-total"><span>Total del pedido</span><strong>${{ '%.2f'|format(o.total) }} MXN</strong></div>
+    </article>
+    {% endfor %}
+  {% else %}
+    <div class="account-empty"><span>✳</span><h3>Aún no tienes compras asociadas</h3><p>Cuando finalices una compra con tu sesión iniciada, aparecerá aquí.</p><a class="button button-dark" href="{{ url_for('index') }}">Explorar la colección ↗</a></div>
+  {% endif %}
+  </section>
+</main>
+{% endblock %}

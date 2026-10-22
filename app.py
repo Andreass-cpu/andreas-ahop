@@ -9,8 +9,9 @@ from bson import ObjectId
 from dotenv import load_dotenv
 from flask import Flask, abort, flash, jsonify, redirect, render_template, request, session, url_for
 from pymongo import MongoClient, ReturnDocument
-from pymongo.errors import PyMongoError
+from pymongo.errors import DuplicateKeyError, PyMongoError
 from werkzeug.middleware.proxy_fix import ProxyFix
+from werkzeug.security import check_password_hash, generate_password_hash
 
 load_dotenv()
 
@@ -27,7 +28,8 @@ app.config.update(
 
 MONGODB_URI = os.getenv("MONGODB_URI", "").strip()
 MONGO_DB_NAME = os.getenv("MONGO_DB_NAME", "vesta_fashion").strip() or "vesta_fashion"
-ADMIN_USERNAME = os.getenv("ADMIN_USERNAME", "admin")
+ADMIN_USERNAME = os.getenv("ADMIN_USERNAME", "andreas")
+# Keep the password in Render Environment / local .env; never bake it into public source.
 ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "")
 STRIPE_SECRET_KEY = os.getenv("STRIPE_SECRET_KEY", "").strip()
 STRIPE_WEBHOOK_SECRET = os.getenv("STRIPE_WEBHOOK_SECRET", "").strip()
@@ -110,7 +112,7 @@ def json_product(doc):
 def admin_required(fn):
     @wraps(fn)
     def wrapper(*args, **kwargs):
-        if not session.get("is_admin"):
+        if not session.get("is_admin") or session.get("admin_user") != ADMIN_USERNAME:
             if request.path.startswith("/api/"):
                 return jsonify({"error": "Inicia sesión como administrador."}), 401
             return redirect(url_for("admin_login", next=request.path))
@@ -200,13 +202,22 @@ def sanitize_order(order):
         "payment_method": order.get("payment_method", "cod"),
         "payment_status": order.get("payment_status", "unpaid"),
         "status": order.get("status", "received"),
-        "created_at": order.get("created_at", utcnow()).isoformat(),
+        "created_at": (order.get("created_at", utcnow()).isoformat()
+                       if hasattr(order.get("created_at", utcnow()), "isoformat")
+                       else str(order.get("created_at", ""))),
     }
 
 
 @app.context_processor
 def inject_store_settings():
-    return {"store_name": STORE_NAME, "currency": CURRENCY.upper(), "stripe_enabled": bool(STRIPE_SECRET_KEY)}
+    return {
+        "store_name": STORE_NAME,
+        "currency": CURRENCY.upper(),
+        "stripe_enabled": bool(STRIPE_SECRET_KEY),
+        "customer_signed_in": bool(session.get("customer_id")),
+        "customer_name": session.get("customer_name", ""),
+        "admin_signed_in": bool(session.get("is_admin")),
+    }
 
 
 @app.get("/")
@@ -319,6 +330,7 @@ def api_checkout():
         order = {
             "number": f"VST-{now.strftime('%y%m%d')}-{str(ObjectId())[-6:].upper()}",
             "customer": {key: str(customer.get(key, "")).strip()[:200] for key in required.keys()} | {"postal_code": str(customer.get("postal_code", "")).strip()[:30], "notes": str(customer.get("notes", "")).strip()[:500]},
+            "customer_account_id": session.get("customer_id") if ObjectId.is_valid(str(session.get("customer_id", ""))) else None,
             "items": detail_items,
             "stock_items": clean_items,
             "subtotal": subtotal,
@@ -438,6 +450,117 @@ def stripe_webhook():
 @app.get("/pedido/<order_number>/gracias")
 def order_success(order_number):
     return render_template("success.html", order={"number": order_number}, paid=False)
+
+
+def customer_required(fn):
+    @wraps(fn)
+    def wrapper(*args, **kwargs):
+        customer_id = str(session.get("customer_id", ""))
+        if not ObjectId.is_valid(customer_id):
+            return redirect(url_for("customer_login", next=request.path))
+        return fn(*args, **kwargs)
+    return wrapper
+
+
+@app.route("/cuenta/crear", methods=["GET", "POST"])
+def customer_register():
+    if session.get("customer_id") and ObjectId.is_valid(str(session.get("customer_id"))):
+        return redirect(url_for("customer_dashboard"))
+
+    if request.method == "POST":
+        name = request.form.get("name", "").strip()[:120]
+        email = request.form.get("email", "").strip().lower()[:254]
+        password = request.form.get("password", "")
+        confirm_password = request.form.get("confirm_password", "")
+
+        if len(name) < 2:
+            flash("Escribe tu nombre completo.", "error")
+        elif not re.fullmatch(r"[^\s@]+@[^\s@]+\.[^\s@]+", email):
+            flash("Escribe un correo electrónico válido.", "error")
+        elif len(password) < 8:
+            flash("La contraseña debe tener al menos 8 caracteres.", "error")
+        elif password != confirm_password:
+            flash("Las contraseñas no coinciden.", "error")
+        else:
+            try:
+                db = get_db()
+                db.users.create_index("email", unique=True)
+                if db.users.find_one({"email": email}, {"_id": 1}):
+                    flash("Ya existe una cuenta con ese correo. Inicia sesión.", "error")
+                else:
+                    user = {
+                        "name": name,
+                        "email": email,
+                        "password_hash": generate_password_hash(password),
+                        "created_at": utcnow(),
+                    }
+                    result = db.users.insert_one(user)
+                    session.clear()
+                    session["customer_id"] = str(result.inserted_id)
+                    session["customer_name"] = name
+                    session["customer_email"] = email
+                    flash("Tu cuenta se creó correctamente.", "success")
+                    return redirect(url_for("customer_dashboard"))
+            except DuplicateKeyError:
+                flash("Ya existe una cuenta con ese correo. Inicia sesión.", "error")
+            except Exception:
+                app.logger.exception("No se pudo crear la cuenta del cliente")
+                flash("No pudimos crear tu cuenta. Comprueba la conexión con MongoDB Atlas.", "error")
+
+    return render_template("customer_register.html")
+
+
+@app.route("/cuenta/login", methods=["GET", "POST"])
+def customer_login():
+    if session.get("customer_id") and ObjectId.is_valid(str(session.get("customer_id"))):
+        return redirect(url_for("customer_dashboard"))
+
+    if request.method == "POST":
+        email = request.form.get("email", "").strip().lower()[:254]
+        password = request.form.get("password", "")
+        try:
+            user = get_db().users.find_one({"email": email})
+            if user and check_password_hash(user.get("password_hash", ""), password):
+                session.clear()
+                session["customer_id"] = str(user["_id"])
+                session["customer_name"] = user.get("name", "Cliente")
+                session["customer_email"] = user.get("email", email)
+                return redirect(url_for("customer_dashboard"))
+            flash("Correo o contraseña incorrectos.", "error")
+        except Exception:
+            app.logger.exception("No se pudo iniciar sesión de cliente")
+            flash("No pudimos iniciar sesión. Comprueba la conexión con MongoDB Atlas.", "error")
+
+    return render_template("customer_login.html")
+
+
+@app.get("/cuenta/salir")
+def customer_logout():
+    session.pop("customer_id", None)
+    session.pop("customer_name", None)
+    session.pop("customer_email", None)
+    flash("Has cerrado sesión.", "success")
+    return redirect(url_for("index"))
+
+
+@app.get("/cuenta")
+@customer_required
+def customer_dashboard():
+    try:
+        db = get_db()
+        user = db.users.find_one({"_id": ObjectId(session["customer_id"])}, {"password_hash": 0})
+        if not user:
+            session.pop("customer_id", None)
+            session.pop("customer_name", None)
+            session.pop("customer_email", None)
+            return redirect(url_for("customer_login"))
+        orders = [sanitize_order(o) for o in db.orders.find({"customer_account_id": str(user["_id"])}).sort("created_at", -1).limit(100)]
+        db_error = None
+    except Exception:
+        app.logger.exception("No se pudo cargar la cuenta del cliente")
+        user, orders = {"name": session.get("customer_name", "Cliente"), "email": session.get("customer_email", "")}, []
+        db_error = "No se pudo cargar tu historial. Comprueba la conexión con MongoDB Atlas."
+    return render_template("customer_account.html", user=user, orders=orders, db_error=db_error)
 
 
 @app.route("/admin/login", methods=["GET", "POST"])

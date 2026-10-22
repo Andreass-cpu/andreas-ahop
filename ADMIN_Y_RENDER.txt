@@ -1,0 +1,18 @@
+VESTA — CUENTAS, ADMINISTRACIÓN Y RENDER
+
+1. Sube todos los archivos actualizados del proyecto a la rama main de GitHub. Render debe terminar el redeploy.
+2. En Render abre el servicio andreas-ahop → Environment. Configura:
+   ADMIN_USERNAME = andreas
+   ADMIN_PASSWORD = 4 (solo temporal para probar; reemplázala por una contraseña larga antes de abrir la tienda al público)
+   MONGO_DB_NAME = vesta_fashion
+   MONGODB_URI = URI de tu clúster Atlas
+   SECRET_KEY = clave aleatoria larga y privada
+3. Guarda cambios y espera a que termine el despliegue.
+4. En la tienda verás los botones “Mi cuenta” y “Administración”.
+5. Los compradores entran en Mi cuenta → “Crear una cuenta” si aún no tienen cuenta. Las cuentas de cliente se guardan en Atlas; sus contraseñas se almacenan como hash, no como texto plano.
+6. Para administrar, pulsa “Administración” e inicia sesión con las credenciales configuradas en Render. Solo esa sesión de administrador puede agregar, editar o quitar productos y gestionar pedidos. El registro público nunca crea administradores.
+7. En Administración puedes agregar/editar/quitar productos y actualizar estados de pedidos. Los cambios se guardan en las colecciones products y orders de Atlas. Las compras realizadas con sesión iniciada aparecen en el historial de esa cuenta.
+8. El botón inferior izquierdo alterna modo oscuro y modo claro, y recuerda la selección en el navegador.
+9. Comprueba https://andreas-ahop.onrender.com/health. Debe indicar database=connected. Si Atlas indica “bad auth: authentication failed”, actualiza MONGODB_URI con las credenciales del usuario de base de datos de Atlas, no las de inicio de sesión de la página Atlas.
+
+IMPORTANTE: la contraseña “4” es extremadamente débil. No la uses para vender al público. El panel contiene datos personales de clientes. No guardes .env ni contraseñas en GitHub, y no compartas la URI de Atlas.
