@@ -1,0 +1,17 @@
+VESTA — PAQUETE COMPLETO CORREGIDO
+
+Este ZIP contiene el proyecto completo: app.py, templates/, static/, requirements.txt, render.yaml y documentación.
+
+PARA ACTUALIZAR GITHUB Y RENDER
+1. Descarga y extrae el ZIP en tu computadora.
+2. Abre la carpeta vesta-fashion-python que contiene app.py en la raíz, templates/ y static/.
+3. Reemplaza los archivos de tu repositorio con el contenido de esa carpeta. Mantén la estructura: app.py, templates/admin.html, templates/customer_account.html, static/, etc. No metas todo dentro de una carpeta adicional.
+4. NO subas tu archivo .env ni contraseñas, ni reemplaces variables privadas de Render. El ZIP no incluye un .env con secretos.
+5. Haz commit y push a la rama conectada a Render (normalmente main). En Render verifica el commit desplegado y que el servicio quede Live.
+6. Abre /admin de nuevo. En templates/admin.html debe aparecer o.get('items', []) en vez de o.items.
+
+CORRECCIÓN PRINCIPAL
+La plantilla del panel de administración trataba o.items como si fuera la lista de productos del pedido. En diccionarios Python, .items también es un método, por eso Jinja daba TypeError al calcular su longitud. Ahora se obtiene la lista con o.get('items', []) y se usan valores seguros para datos opcionales. También se hicieron más robustas las lecturas de artículos del historial de cliente.
+
+NOTA DE SEGURIDAD
+Configura ADMIN_PASSWORD y SECRET_KEY como variables privadas en Render. No uses una contraseña simple para producción.
