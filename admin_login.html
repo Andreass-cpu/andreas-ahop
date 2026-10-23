@@ -1,0 +1,10 @@
+{% extends 'base.html' %}
+{% block title %}Acceso de administración — {{ store_name }}{% endblock %}
+{% block content %}
+<header class="topbar"><a class="brand" href="{{ url_for('index') }}">{{ store_name }}<span>.</span></a><a class="back-link" href="{{ url_for('index') }}">← Volver a la tienda</a></header>
+<main class="login-page"><div class="login-card"><span class="eyebrow">ZONA PRIVADA</span><h1>Panel de <em>administración.</em></h1><p>Entra para gestionar productos, inventario y pedidos de tus clientes.</p>
+{% with messages = get_flashed_messages(with_categories=true) %}{% for category, message in messages %}<div class="flash {{ category }}">{{ message }}</div>{% endfor %}{% endwith %}
+<form method="post" class="login-form"><label class="field">Usuario<input name="username" required autocomplete="username" value="{{ request.form.get('username','') }}"></label><label class="field">Contraseña<input name="password" type="password" required autocomplete="current-password"></label><button class="button button-dark" type="submit">Entrar al panel ↗</button></form>
+<small>El acceso administrativo usa las credenciales privadas configuradas por el propietario en Render. No existe registro público de administradores.</small>
+<p class="admin-login-extra">¿Quieres comprar en VESTA? <a href="{{ url_for('customer_login') }}">Entra a tu cuenta</a> o <a href="{{ url_for('customer_register') }}">crea una cuenta de cliente</a>.</p></div></main>
+{% endblock %}

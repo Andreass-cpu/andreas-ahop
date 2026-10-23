@@ -1,0 +1,64 @@
+/* Global dark mode. The selected theme is saved locally in the browser. */
+.theme-toggle{position:fixed;left:18px;bottom:18px;z-index:10000;display:flex;align-items:center;gap:8px;padding:10px 14px;border:1px solid #c9cabc;border-radius:999px;background:#23251f;color:#fff;font:600 11px 'DM Sans',Arial,sans-serif;box-shadow:0 8px 28px rgba(0,0,0,.18);transition:transform .2s,background .2s}
+.theme-toggle:hover{transform:translateY(-2px)}.theme-toggle-icon{font-size:16px;line-height:1}.theme-toggle-label{white-space:nowrap}
+html[data-theme="dark"] body{--ink:#eceee8;--muted:#a5aa9e;--paper:#171916;--white:#20231e;--olive:#b4bd91;--line:#393d35;--sand:#2b2f28;--shadow:0 18px 55px rgba(0,0,0,.3);background:var(--paper);color:var(--ink);color-scheme:dark}
+html[data-theme="dark"] body{background-color:var(--paper)}
+html[data-theme="dark"] .topbar,html[data-theme="dark"] .admin-topbar,html[data-theme="dark"] .site-footer{background:#1c1f1a;border-color:#343830;color:var(--ink)}
+html[data-theme="dark"] .main-nav a,html[data-theme="dark"] .back-link,html[data-theme="dark"] .admin-user a{color:var(--ink)}
+html[data-theme="dark"] .hero-copy,html[data-theme="dark"] .hero-note,html[data-theme="dark"] .product-info,html[data-theme="dark"] .section-heading,html[data-theme="dark"] .editorial-copy,html[data-theme="dark"] .newsletter,html[data-theme="dark"] .checkout-page,html[data-theme="dark"] .success-page,html[data-theme="dark"] .login-page,html[data-theme="dark"] .admin-page{color:var(--ink)}
+html[data-theme="dark"] .category-tab,html[data-theme="dark"] .admin-tab{color:#b8bcae}
+html[data-theme="dark"] .category-tab.active,html[data-theme="dark"] .admin-tab.active{color:#f4f5ef;border-color:#aeb68c}
+html[data-theme="dark"] .search-box,html[data-theme="dark"] .search-box input,html[data-theme="dark"] .field input,html[data-theme="dark"] .field textarea,html[data-theme="dark"] .field select,html[data-theme="dark"] .status-select{background:#22251f;color:#f0f2eb;border-color:#41463b}
+html[data-theme="dark"] .search-box svg{stroke:#b6bbaa}
+html[data-theme="dark"] .product-card,html[data-theme="dark"] .product-info,html[data-theme="dark"] .order-summary,html[data-theme="dark"] .payment-option,html[data-theme="dark"] .login-card,html[data-theme="dark"] .product-editor,html[data-theme="dark"] .admin-stats>div{background:#22251f;color:var(--ink);border-color:#3b4037}
+html[data-theme="dark"] .payment-option:has(input:checked){background:#2d3326;border-color:#86916b}
+html[data-theme="dark"] .payment-icon,html[data-theme="dark"] .product-tag,html[data-theme="dark"] .admin-pill{background:#30352a;color:#d7dfbf;border-color:#4c5341}
+html[data-theme="dark"] .payment-check{border-color:#737b66}
+html[data-theme="dark"] .summary-head,html[data-theme="dark"] .summary-total,html[data-theme="dark"] .summary-security,html[data-theme="dark"] .summary-line,html[data-theme="dark"] .checkout-item,html[data-theme="dark"] .form-section,html[data-theme="dark"] .admin-tabs,html[data-theme="dark"] .admin-table td,html[data-theme="dark"] .admin-table th{border-color:#3b4037}
+html[data-theme="dark"] .summary-head,html[data-theme="dark"] .admin-table th{background:#292d26}
+html[data-theme="dark"] .admin-table-wrap{background:#1d201b;border-color:#3b4037}
+html[data-theme="dark"] .admin-table td{color:#e2e5dd;background:#1f221d}
+html[data-theme="dark"] .admin-table tbody tr:hover td{background:#282d25}
+html[data-theme="dark"] .admin-table th{color:#b6bbaa}
+html[data-theme="dark"] .admin-table strong,html[data-theme="dark"] .customer-detail strong,html[data-theme="dark"] .order-line-item strong{color:#f0f2eb}
+html[data-theme="dark"] .admin-product img,html[data-theme="dark"] .checkout-item>img,html[data-theme="dark"] .order-line-item img{background:#34382f}
+html[data-theme="dark"] .mini-button{color:#e4e7df;border-color:#505649}
+html[data-theme="dark"] .mini-button:hover{background:#34392e}
+html[data-theme="dark"] .mini-button.danger{color:#f1bcb1;border-color:#754e47}
+html[data-theme="dark"] .status-chip{background:#34382f;color:#e3e6dd}
+html[data-theme="dark"] .status-active,html[data-theme="dark"] .status-delivered{background:#34412e;color:#c9e1bd}
+html[data-theme="dark"] .status-received,html[data-theme="dark"] .status-processing{background:#463a24;color:#f0d39a}
+html[data-theme="dark"] .status-shipped{background:#293b40;color:#b9e0e8}
+html[data-theme="dark"] .status-cancelled{background:#472d2a;color:#f0b9af}
+html[data-theme="dark"] .status-pending_payment{background:#463821;color:#f0d19a}
+html[data-theme="dark"] .order-detail{color:#e4e7df}
+html[data-theme="dark"] .order-detail summary{color:#d2dbb4}
+html[data-theme="dark"] .order-line-item{border-color:#3a4036}
+html[data-theme="dark"] .order-items-subtotal{color:#c8d1b1}
+html[data-theme="dark"] .order-number-card{border-color:#3b4037;background:#22251f}
+html[data-theme="dark"] .text-link,html[data-theme="dark"] .admin-welcome h1 em,html[data-theme="dark"] .eyebrow{color:#c0ca9c}
+html[data-theme="dark"] .value-strip{border-color:#393d35}
+html[data-theme="dark"] .value-strip>div,html[data-theme="dark"] .value-strip p{color:#dce0d6}
+html[data-theme="dark"] .stock-badge{background:#34382f;color:#e9ecdf}
+html[data-theme="dark"] .stock-badge.out{background:#4b302c;color:#f5c0b7}
+html[data-theme="dark"] .editorial{background:#22251f}
+html[data-theme="dark"] .newsletter{background:#1e211c}
+html[data-theme="dark"] .newsletter-form input{background:#252921;color:#f1f2eb;border-color:#454b3f}
+html[data-theme="dark"] .button-outline{color:var(--ink);border-color:#666d59}
+html[data-theme="dark"] .button-dark{background:#d4dcc0;color:#22251f}
+html[data-theme="dark"] .button-dark:hover{background:#e7ecd9}
+html[data-theme="dark"] .cart-drawer,html[data-theme="dark"] .cart-panel,html[data-theme="dark"] .cart-content{background:#20231e;color:#eff1e9}
+html[data-theme="dark"] .cart-overlay{background:rgba(0,0,0,.68)}
+html[data-theme="dark"] .database-warning{background:#472d2a;color:#ffd2c9;border-color:#754e47}
+html[data-theme="dark"] .admin-privacy-note{color:#adb39f}
+html[data-theme="dark"] .theme-toggle{background:#e5e9d8;color:#22251f;border-color:#8f987c}
+html[data-theme="dark"] .toast{background:#30352a;color:#f0f2eb;border:1px solid #4c5341}
+@media(max-width:720px){.theme-toggle{left:12px;bottom:12px;padding:9px 11px;gap:6px}.theme-toggle-label{font-size:10px}}
+html[data-theme="dark"] .admin-access-button{border-color:#53594a;color:var(--ink)}
+html[data-theme="dark"] .account-order,html[data-theme="dark"] .account-empty{background:#22251f;border-color:#3b4037}
+html[data-theme="dark"] .account-order-head,html[data-theme="dark"] .account-order-total{border-color:#3b4037}
+html[data-theme="dark"] .account-order-status{background:#30352a;color:#e1e5d8}
+html[data-theme="dark"] .account-order-status.status-delivered{background:#34412e;color:#c9e1bd}
+html[data-theme="dark"] .account-order-status.status-cancelled{background:#472d2a;color:#f0b9af}
+html[data-theme="dark"] .account-order-status.status-shipped{background:#293b40;color:#b9e0e8}
+html[data-theme="dark"] .account-switch a{color:var(--ink)}

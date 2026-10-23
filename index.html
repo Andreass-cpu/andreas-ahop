@@ -1,0 +1,42 @@
+{% extends 'base.html' %}
+{% block title %}{{ store_name }} — Moda para cada día{% endblock %}
+{% block content %}
+<header class="topbar">
+  <a class="brand" href="{{ url_for('index') }}">{{ store_name }}<span>.</span></a>
+  <nav class="main-nav" aria-label="Navegación principal">
+    <a href="#coleccion">Colección</a><a href="#nosotros">Nuestra esencia</a>
+  </nav>
+  <div class="header-actions">
+    <a class="account-link" href="{{ url_for('customer_dashboard') if customer_signed_in else url_for('customer_login') }}">{{ 'Mi cuenta' if not customer_signed_in else 'Hola, ' ~ customer_name.split(' ')[0] }}</a>
+    <a class="admin-access-button" href="{{ url_for('admin_dashboard') if admin_signed_in else url_for('admin_login') }}">{{ 'Panel admin' if admin_signed_in else 'Administración' }}</a>
+    <button class="icon-button" id="searchToggle" aria-label="Buscar"><svg viewBox="0 0 24 24"><circle cx="10.8" cy="10.8" r="6.8"></circle><path d="m16 16 5 5"></path></svg></button>
+    <a class="bag-button" href="{{ url_for('checkout') }}" aria-label="Ir al carrito"><svg viewBox="0 0 24 24"><path d="M5 8h14l1 13H4L5 8Z"></path><path d="M9 9V6a3 3 0 0 1 6 0v3"></path></svg><span>Bolsa <b id="cartCount">0</b></span></a>
+  </div>
+</header>
+{% with messages = get_flashed_messages(with_categories=true) %}{% if messages %}<div class="flash-wrap">{% for category, message in messages %}<div class="flash {{ category }}">{{ message }}</div>{% endfor %}</div>{% endif %}{% endwith %}
+{% if db_error %}<div class="database-warning"><strong>Catálogo listo para probar.</strong> {{ db_error }} Revisa el archivo <code>.env</code> o las variables de Render.</div>{% endif %}
+<main>
+  <section class="hero">
+    <div class="hero-copy"><span class="eyebrow">NUEVA TEMPORADA · 2026</span><h1>Menos reglas.<br><em>Más estilo.</em></h1><p>Piezas que combinan contigo, para moverte a tu manera todos los días.</p><a class="button button-dark" href="#coleccion">Descubrir colección <span>↗</span></a><div class="hero-note"><span class="note-mark">✳</span><span>Diseño versátil<br>para todos los días</span></div></div>
+    <div class="hero-photo"><img src="https://images.unsplash.com/photo-1483985988355-763728e1935b?auto=format&fit=crop&w=1500&q=90" alt="Amigos explorando moda en la ciudad" fetchpriority="high"><div class="photo-label"><span>01 / 04</span><span>Everyday essentials</span></div><div class="hero-stamp">STYLE<br>YOUR<br>STORY</div></div>
+  </section>
+  <section class="value-strip"><div><span>01</span><p>Estilo sin esfuerzo</p></div><div><span>02</span><p>Selección versátil</p></div><div><span>03</span><p>Envío gratis desde $1,500</p></div></section>
+  <section class="collection-section" id="coleccion">
+    <div class="section-heading"><div><span class="eyebrow">ENCUENTRA TU ESTILO</span><h2>Favoritos de <em>la temporada</em></h2></div><p>Lo esencial, con un giro inesperado.</p></div>
+    <div class="shop-controls"><div class="category-tabs" id="categoryTabs"><button class="category-tab active" data-category="Todos">Todo</button><button class="category-tab" data-category="Mujer">Mujer</button><button class="category-tab" data-category="Hombre">Hombre</button><button class="category-tab" data-category="Calzado">Calzado</button><button class="category-tab" data-category="Accesorios">Accesorios</button></div><label class="search-box" id="searchBox"><svg viewBox="0 0 24 24"><circle cx="10.8" cy="10.8" r="6.8"></circle><path d="m16 16 5 5"></path></svg><input type="search" id="productSearch" placeholder="Buscar prendas..." aria-label="Buscar productos"></label></div>
+    <div class="product-grid" id="productGrid">
+      {% for p in products %}
+      <article class="product-card" data-id="{{ p.id }}" data-name="{{ p.name|lower }}" data-category="{{ p.category }}" data-description="{{ p.description|lower }}" data-price="{{ p.price }}" data-image="{{ p.image }}" data-stock="{{ p.stock }}" data-sizes='{{ p.sizes|tojson }}' data-colors='{{ p.colors|tojson }}'>
+        <div class="product-image-wrap"><img class="product-image" src="{{ p.image }}" alt="{{ p.name }}" loading="lazy" onerror="this.onerror=null;this.src='{{ url_for('static', filename='images/product-placeholder.svg') }}'"><button class="favorite-button" aria-label="Guardar en favoritos" data-favorite="{{ p.id }}">♡</button>{% if loop.index <= 2 %}<span class="product-tag">SELECCIÓN VESTA</span>{% endif %}<span class="stock-badge {% if p.stock <= 0 %}out{% endif %}">{% if p.stock <= 0 %}Agotado{% elif p.stock <= 4 %}Últimas piezas{% endif %}</span></div>
+        <div class="product-info"><div class="product-title-row"><div><span class="product-category">{{ p.category }}</span><h3>{{ p.name }}</h3></div><strong class="product-price">${{ '%.2f'|format(p.price) }}</strong></div><p class="product-description">{{ p.description }}</p><div class="product-options"><label>Talla<select class="size-select">{% for size in p.sizes %}<option value="{{ size }}">{{ size }}</option>{% endfor %}</select></label><label>Color<select class="color-select">{% for color in p.colors %}<option value="{{ color }}">{{ color }}</option>{% endfor %}</select></label></div><button class="add-button" data-add="{{ p.id }}" {% if p.stock <= 0 %}disabled{% endif %}><span>+</span> Añadir a la bolsa</button></div>
+      </article>
+      {% endfor %}
+    </div>
+    <div class="empty-state" id="emptyState" hidden><span>✳</span><h3>No encontramos esa pieza</h3><p>Prueba con otra búsqueda o categoría.</p></div>
+    {% if not products and not db_error %}<div class="empty-state"><h3>Pronto habrá novedades</h3><p>Vuelve a visitarnos para conocer la colección.</p></div>{% endif %}
+  </section>
+  <section class="editorial" id="nosotros"><div class="editorial-image"><img src="https://images.unsplash.com/photo-1529139574466-a303027c1d8b?auto=format&fit=crop&w=1200&q=85" alt="Estilo contemporáneo y moda urbana" loading="lazy"></div><div class="editorial-copy"><span class="eyebrow">NUESTRA ESENCIA</span><h2>Tu ropa.<br>Tu ritmo.<br><em>Tu historia.</em></h2><p>Creemos en una moda que acompaña quién eres. Seleccionamos piezas fáciles de llevar, cómodas y con personalidad para que vestirte sea la parte más sencilla del día.</p><a href="#coleccion" class="text-link">Encuentra tus esenciales <span>↗</span></a></div></section>
+  <section class="newsletter"><span class="eyebrow">QUÉDATE CERCA</span><h2>Un poco de inspiración<br><em>en tu bandeja.</em></h2><p>Novedades, lanzamientos y favoritos de VESTA.</p><form id="newsletterForm" class="newsletter-form"><input type="email" placeholder="Tu correo electrónico" required aria-label="Tu correo electrónico"><button type="submit" class="button button-dark">Me apunto ↗</button></form><small>Demo: el formulario no almacena correos ni envía campañas.</small></section>
+</main>
+{% endblock %}
+{% block scripts %}<script src="{{ url_for('static', filename='store.js') }}"></script>{% endblock %}

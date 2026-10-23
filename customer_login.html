@@ -1,0 +1,10 @@
+{% extends 'base.html' %}
+{% block title %}Iniciar sesión — {{ store_name }}{% endblock %}
+{% block content %}
+<header class="topbar account-topbar"><a class="brand" href="{{ url_for('index') }}">{{ store_name }}<span>.</span></a><a class="back-link" href="{{ url_for('index') }}">← Volver a la tienda</a></header>
+<main class="login-page"><section class="login-card account-card"><span class="eyebrow">TU ESPACIO VESTA</span><h1>Bienvenido <em>de vuelta.</em></h1><p>Inicia sesión para consultar tus compras y dar seguimiento a tus pedidos.</p>
+{% with messages = get_flashed_messages(with_categories=true) %}{% for category, message in messages %}<div class="flash {{ category }}">{{ message }}</div>{% endfor %}{% endwith %}
+<form method="post" class="login-form"><label class="field">Correo electrónico<input name="email" type="email" required autocomplete="email" value="{{ request.form.get('email','') }}"></label><label class="field">Contraseña<input name="password" type="password" required autocomplete="current-password"></label><button class="button button-dark" type="submit">Iniciar sesión ↗</button></form>
+<p class="account-switch">¿Todavía no tienes cuenta? <a href="{{ url_for('customer_register') }}">Crear una cuenta</a></p>
+</section></main>
+{% endblock %}

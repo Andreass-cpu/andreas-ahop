@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 1000" role="img" aria-label="VESTA moda">
+  <defs><linearGradient id="bg" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#eee8dc"/><stop offset="1" stop-color="#d8d0c2"/></linearGradient></defs>
+  <rect width="800" height="1000" fill="url(#bg)"/>
+  <circle cx="620" cy="190" r="130" fill="#f6f3ec" opacity=".55"/>
+  <path d="M290 250 365 210h70l75 40 95 120-65 60-55-68v365H315V362l-55 68-65-60z" fill="#777b63"/>
+  <path d="M365 210q35 65 70 0" fill="none" stroke="#e5dfd3" stroke-width="18"/>
+  <path d="M315 365h170" stroke="#696d57" stroke-width="4" opacity=".5"/>
+  <text x="400" y="830" text-anchor="middle" fill="#36382e" font-family="Georgia,serif" font-size="66" letter-spacing="14">VESTA</text>
+  <text x="400" y="878" text-anchor="middle" fill="#656758" font-family="Arial,sans-serif" font-size="18" letter-spacing="5">STYLE YOUR STORY</text>
+</svg>

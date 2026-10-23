@@ -1,0 +1,72 @@
+{% extends 'base.html' %}
+{% block title %}Administración — {{ store_name }}{% endblock %}
+{% block head %}<link rel="stylesheet" href="{{ url_for('static', filename='admin.css') }}">{% endblock %}
+{% block content %}
+<header class="admin-topbar">
+  <a class="brand" href="{{ url_for('index') }}">{{ store_name }}<span>.</span></a>
+  <span class="admin-pill">ADMINISTRACIÓN</span>
+  <div class="admin-user">Sesión iniciada como <strong>{{ session.get('admin_user','andreas') }}</strong> · <a href="{{ url_for('admin_logout') }}">Cerrar sesión</a></div>
+</header>
+<main class="admin-page">
+  <div class="admin-welcome">
+    <div><span class="eyebrow">TU NEGOCIO, EN ORDEN</span><h1>Hola, <em>{{ session.get('admin_user','andreas') }}.</em></h1><p>Administra productos, existencias y compras de tus clientes. Los cambios se guardan en MongoDB Atlas.</p></div>
+    <a href="{{ url_for('index') }}" class="button button-outline">Ver tienda ↗</a>
+  </div>
+  {% if db_error %}<div class="database-warning">{{ db_error }}</div>{% endif %}
+  <div class="admin-stats">
+    <div><span>Productos en catálogo</span><strong id="statProducts">{{ products|selectattr('active')|list|length }}</strong></div>
+    <div><span>Pedidos registrados</span><strong id="statOrders">{{ orders|length }}</strong></div>
+    <div><span>Pedidos por preparar</span><strong id="statPending">{{ orders|selectattr('status','equalto','received')|list|length }}</strong></div>
+  </div>
+  <div class="admin-tabs"><button class="admin-tab active" data-tab="products">Productos</button><button class="admin-tab" data-tab="orders">Compras / pedidos</button></div>
+
+  <section id="adminProducts" class="admin-section">
+    <div class="admin-section-heading"><div><h2>Catálogo de productos</h2><p>Añade prendas, cambia precios y existencias o quita productos de la tienda.</p></div><button id="newProductButton" class="button button-dark">+ Nuevo producto</button></div>
+    <form id="productForm" class="product-editor" hidden>
+      <input type="hidden" name="id">
+      <div class="form-grid">
+        <label class="field">Nombre<input name="name" required maxlength="120"></label>
+        <label class="field">Categoría<input name="category" required placeholder="Mujer, Hombre, Calzado..."></label>
+        <label class="field">Precio ({{ currency }})<input name="price" type="number" min="0" step="0.01" required></label>
+        <label class="field">Inventario<input name="stock" type="number" min="0" step="1" required></label>
+        <label class="field full">Descripción<textarea name="description" rows="2"></textarea></label>
+        <label class="field full">URL de imagen<input name="image" type="url" placeholder="https://..."></label>
+        <label class="field">Tallas separadas por coma<input name="sizes" placeholder="XS, S, M, L"></label>
+        <label class="field">Colores separados por coma<input name="colors" placeholder="Negro, Arena"></label>
+      </div>
+      <div class="editor-actions"><button class="button button-dark" type="submit">Guardar en Atlas</button><button class="button button-outline" id="cancelProduct" type="button">Cancelar</button></div>
+      <p class="admin-message" id="productMessage" role="status"></p>
+    </form>
+    <div class="admin-table-wrap"><table class="admin-table"><thead><tr><th>Producto</th><th>Categoría</th><th>Precio</th><th>Stock</th><th>Estado</th><th>Acciones</th></tr></thead><tbody id="productsTable">
+      {% for p in products %}
+      <tr data-id="{{ p.id }}" data-product='{{ p|tojson|forceescape }}'>
+        <td><div class="admin-product"><img src="{{ p.image or url_for('static', filename='images/product-placeholder.svg') }}" alt="" onerror="this.onerror=null;this.src='{{ url_for('static', filename='images/product-placeholder.svg') }}'"><strong>{{ p.name }}</strong></div></td>
+        <td>{{ p.category }}</td><td>${{ '%.2f'|format(p.price) }}</td><td>{{ p.stock }}</td>
+        <td><span class="status-chip {% if p.active %}status-active{% else %}status-cancelled{% endif %}">{{ 'Activo' if p.active else 'Oculto' }}</span></td>
+        <td class="table-actions"><button class="mini-button" data-edit-product="{{ p.id }}">Editar</button>{% if p.active %}<button class="mini-button danger" data-delete-product="{{ p.id }}">Quitar</button>{% else %}<button class="mini-button" data-reactivate-product="{{ p.id }}">Reactivar</button>{% endif %}</td>
+      </tr>
+      {% else %}<tr><td colspan="6" class="table-empty">No hay productos todavía. Usa “Nuevo producto” para añadir el primero.</td></tr>{% endfor %}
+    </tbody></table></div>
+  </section>
+
+  <section id="adminOrders" class="admin-section" hidden>
+    <div class="admin-section-heading"><div><h2>Compras de clientes</h2><p>Consulta los productos comprados, datos de entrega y cambia el estado de cada pedido.</p></div><button class="button button-outline" id="refreshOrders">↻ Actualizar</button></div>
+    <div class="admin-table-wrap"><table class="admin-table order-table"><thead><tr><th>Pedido / fecha</th><th>Cliente y entrega</th><th>Artículos comprados</th><th>Total</th><th>Pago</th><th>Estado</th><th>Actualizar</th></tr></thead><tbody id="ordersTable">
+      {% for o in orders %}
+      <tr data-id="{{ o.id }}">
+        <td><strong>{{ o.number }}</strong><small>{{ o.created_at[:16].replace('T',' ') }}</small></td>
+        <td class="customer-detail"><strong>{{ o.customer.get('name','Cliente') }}</strong><small>{{ o.customer.get('email','') }}</small><small>Tel. {{ o.customer.get('phone','—') }}</small><small>{{ o.customer.get('address','') }}</small><small>{{ o.customer.get('city','') }}{% if o.customer.get('postal_code') %}, CP {{ o.customer.get('postal_code') }}{% endif %}</small>{% if o.customer.get('notes') %}<details class="order-detail"><summary>Notas de entrega</summary><p>{{ o.customer.get('notes') }}</p></details>{% endif %}</td>
+        <td><details class="order-detail"><summary>Ver {{ o.get('items', [])|length }} artículo(s)</summary><div class="order-items-detail">{% for item in o.get('items', []) %}<div class="order-line-item">{% if item.image %}<img src="{{ item.image }}" alt="" onerror="this.style.display='none'">{% endif %}<div><strong>{{ item.name }}</strong><small>Cantidad: {{ item.quantity }} · Talla: {{ item.size }} · Color: {{ item.color }}</small><small>${{ '%.2f'|format(item.line_total|default(item.price * item.quantity)) }}</small></div></div>{% endfor %}<p class="order-items-subtotal">Subtotal: ${{ '%.2f'|format(o.subtotal) }}{% if o.shipping %} · Envío: ${{ '%.2f'|format(o.shipping) }}{% endif %}</p></div></details></td>
+        <td><strong>${{ '%.2f'|format(o.total) }} MXN</strong></td>
+        <td>{{ 'Tarjeta' if o.payment_method == 'card' else 'Al recibir' }}<small>{{ 'Pagado' if o.payment_status == 'paid' else 'Pendiente' }}</small></td>
+        <td><span class="status-chip status-{{ o.status }}">{{ {'received':'Recibido','processing':'Preparando','shipped':'Enviado','delivered':'Entregado','cancelled':'Cancelado','pending_payment':'Pago pendiente'}.get(o.status,o.status) }}</span></td>
+        <td><select class="status-select" data-order-status="{{ o.id }}" aria-label="Cambiar estado del pedido {{ o.number }}"><option value="received" {% if o.status == 'received' %}selected{% endif %}>Recibido</option><option value="processing" {% if o.status == 'processing' %}selected{% endif %}>Preparando</option><option value="shipped" {% if o.status == 'shipped' %}selected{% endif %}>Enviado</option><option value="delivered" {% if o.status == 'delivered' %}selected{% endif %}>Entregado</option><option value="cancelled" {% if o.status == 'cancelled' %}selected{% endif %}>Cancelar</option></select></td>
+      </tr>
+      {% else %}<tr><td colspan="7" class="table-empty">Todavía no hay compras guardadas en Atlas.</td></tr>{% endfor %}
+    </tbody></table></div>
+    <p class="admin-privacy-note">Esta sección contiene datos personales de clientes. Mantén las credenciales de administración privadas.</p>
+  </section>
+</main>
+<script id="productData" type="application/json">{{ products|tojson }}</script>
+{% endblock %}
+{% block scripts %}<script src="{{ url_for('static', filename='admin.js') }}"></script>{% endblock %}
