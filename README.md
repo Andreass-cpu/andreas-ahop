@@ -6,14 +6,16 @@ Proyecto de tienda online en **Python (Flask) + MongoDB Atlas**, con catálogo, 
 
 ## Lo que incluye
 
-- Catálogo responsive con 18 productos de muestra, fotografía de producto, categorías, búsqueda, favoritos y selector de talla/color.
+- Catálogo responsive separado en dos secciones: **Ropa normal** (compra directa desde la bolsa) y **Ediciones exclusivas** (cupo máximo y apartado temporal de 5 minutos). El catálogo de demostración incluye prendas normales y cuatro ediciones exclusivas originales de VESTA.
 - El catálogo de muestra también se ve cuando MongoDB Atlas todavía no está configurado; para registrar pedidos e inventario sí debes conectar Atlas.
 - Si alguna fotografía remota no carga, aparece una imagen local de respaldo.
 - Carrito persistente en el navegador y formulario de entrega.
 - Pedidos guardados en MongoDB Atlas. El servidor vuelve a calcular precios y valida tallas, colores y existencias; no confía en los precios enviados por el navegador.
-- Reserva y devolución básica de inventario cuando se crea o cancela un pedido.
+- Apartados temporales de productos durante 5 minutos, con identificador de visitante, contador, consulta, cancelación, caducidad y confirmación al crear el pedido.
+- Ropa normal: compra directa desde la bolsa, con inventario limitado o ilimitado configurable. Ediciones exclusivas: apartado temporal con un cupo máximo de compradores/unidades definido por el administrador.
+- Las ediciones exclusivas usan `exclusive_limit`, `stock` y `reserved`; Atlas valida la disponibilidad de forma atómica para evitar que dos visitantes aparten el mismo último cupo. Cada visitante puede apartar una unidad de cada exclusiva.
 - Panel privado `/admin` para crear, editar, quitar temporalmente y reactivar productos, revisar compras completas (artículos, cantidades, datos de entrega y pago) y cambiar el estado de los pedidos.
-- Los productos e inventario se insertan/actualizan en la colección `products` de MongoDB Atlas; los pedidos se guardan en `orders`.
+- Los productos e inventario se insertan/actualizan en `products`; los apartados temporales se guardan en `reservations`; los pedidos se guardan en `orders` de MongoDB Atlas.
 - Interruptor de modo oscuro/claro para toda la tienda y el panel, con preferencia guardada en el navegador.
 - Pago al recibir habilitado por defecto.
 - Pago con tarjeta opcional mediante Stripe Checkout; necesita configurar las claves de Stripe y un webhook para liberar inventario si la sesión de pago caduca.
@@ -66,8 +68,8 @@ Abre `.env` y completa al menos estas variables:
 MONGODB_URI=mongodb+srv://USUARIO:CONTRASENA@TU-CLUSTER.mongodb.net/?retryWrites=true&w=majority
 MONGO_DB_NAME=vesta_fashion
 SECRET_KEY=una-clave-larga-aleatoria-y-privada
-ADMIN_USERNAME=andreas
-ADMIN_PASSWORD=pon-aqui-una-clave-privada
+ADMIN_USERNAME=vesta
+ADMIN_PASSWORD=4
 STORE_NAME=VESTA
 CURRENCY=mxn
 COOKIE_SECURE=false
@@ -104,14 +106,30 @@ Sustituye la URL de ejemplo por la URL de tu repositorio. Antes de hacer `git ad
 
 1. Entra a [Render](https://render.com/) y elige **New → Blueprint** (o crea un Web Service conectado al repositorio).
 2. Selecciona tu repositorio de GitHub. Render detectará `render.yaml`.
-3. En **Environment**, define `MONGODB_URI` con la URI de Atlas, `ADMIN_USERNAME` como `andreas`, y `ADMIN_PASSWORD` con la contraseña que decidas usar. Para replicar la configuración solicitada en este proyecto, establece `ADMIN_PASSWORD` como `4`, pero es extremadamente débil para una tienda pública: cualquier persona podría intentar entrar y ver nombres, teléfonos, direcciones y pedidos. Cámbiala por una contraseña larga antes de aceptar compras reales. `SECRET_KEY` se genera con Render. No pongas las claves en archivos del repositorio.
+3. En **Environment**, define `MONGODB_URI` con la URI de Atlas, `ADMIN_USERNAME` como `vesta`, y `ADMIN_PASSWORD` como `4` para usar las credenciales iniciales solicitadas. La contraseña `4` es extremadamente débil para una tienda pública: cualquier persona podría intentar entrar y ver nombres, teléfonos, direcciones y pedidos. Cámbiala por una contraseña larga antes de aceptar compras reales. `SECRET_KEY` se genera con Render. No pongas las claves en archivos del repositorio.
 4. Revisa que el nombre de la base de datos sea `vesta_fashion`. Pulsa crear/desplegar.
 5. Cuando termine el despliegue, abre el dominio `onrender.com` de tu servicio. Comprueba `/health`; debería responder `{"status":"ok","database":"connected"}`.
-6. Para administrar la tienda, entra en `https://TU-SERVICIO.onrender.com/admin/login` con el usuario configurado (`andreas`) y `ADMIN_PASSWORD`. El usuario y la contraseña configurados en Render tienen prioridad sobre los valores de ejemplo. El panel muestra datos privados de los compradores; protege las credenciales.
+6. Para administrar la tienda, entra en `https://TU-SERVICIO.onrender.com/admin/login` con el usuario configurado (`vesta`) y `ADMIN_PASSWORD`. El usuario y la contraseña configurados en Render tienen prioridad sobre los valores de ejemplo. El panel muestra datos privados de los compradores; protege las credenciales.
 
 Si la comprobación `/health` falla, revisa `MONGODB_URI`, la contraseña del usuario de base de datos y **Network Access** en Atlas, además de los logs del servicio en Render.
 
-## 5. Pago con tarjeta (opcional)
+## 5. Ropa normal y ediciones exclusivas
+
+La primera carga del catálogo incluye cuatro ejemplos de exclusivas VESTA: Camisa Heritage Verde, Hoodie Street Noir, Chaqueta Biker Eclipse y Blazer Atelier Noire. Son diseños de muestra con estética de lujo/streetwear, no mercancía oficial de Gucci, VLONE ni de otras marcas. Puedes cambiar sus nombres, fotos, precios, tallas y cupos desde Administración; las muestras solo se insertan si todavía no existe un producto con el mismo nombre.
+
+
+Al crear o editar un producto desde `/admin`, primero elige dónde aparecerá:
+
+- **Ropa normal:** se muestra en la sección Ropa normal y se compra directamente agregándola a la bolsa. Puede usar existencias limitadas o inventario ilimitado. El servidor valida y descuenta las existencias limitadas al generar el pedido.
+- **Edición exclusiva:** se muestra en una sección aparte. Al crearla, el administrador establece el **cupo máximo de compradores**. Cada visitante puede apartar una unidad de esa edición. El apartado bloquea un cupo durante cinco minutos; no se puede confirmar después de vencer.
+
+Los apartados exclusivos usan el modelo de cantidad descrito en la actividad: `stock` guarda las unidades todavía no vendidas, `reserved` las unidades apartadas y `exclusive_limit` el cupo máximo original. La disponibilidad se calcula como `stock - reserved`. MongoDB Atlas actualiza `reserved` solamente cuando todavía hay cupo disponible, así que dos visitantes distintos no pueden quedarse con la última unidad. El identificador `reservation_id`, la cantidad, el estado y las fechas UTC se guardan en la colección `reservations`.
+
+El visitante puede consultar su apartado, ver el contador, cancelar o confirmar. Al cancelar o vencer, Atlas libera el cupo una sola vez; al confirmar, se descuenta el stock, se crea el pedido y se elimina la reserva temporal. El contador solo informa: el servidor comprueba la fecha real de vencimiento al confirmar. Las operaciones de reservar, liberar y confirmar usan transacciones de MongoDB Atlas.
+
+Para probarlo, crea una edición exclusiva con cupo 1, abre la tienda en dos navegadores (uno normal y otro incógnito) y trata de apartar desde ambos. Solo uno debe conseguir el cupo. Después prueba cancelar, esperar cinco minutos y confirmar una compra.
+
+## 6. Pago con tarjeta (opcional)
 
 Los pedidos con pago al recibir funcionan sin Stripe. Para activar pagos con tarjeta:
 
@@ -134,6 +152,9 @@ No habilites pagos reales hasta confirmar las URLs, claves y webhooks del entorn
 - `static/theme.js` y `static/dark-mode.css` — modo oscuro/claro en la tienda y en el panel
 - `/health` — estado de MongoDB
 - `/api/products` — catálogo JSON
+- `/api/reservations` — crear un apartado temporal (requiere sesión de visitante)
+- `/api/reservations/current` — consultar el apartado y su vencimiento
+- `/api/reservations/cancel` — cancelar y liberar un apartado
 - `/stripe/webhook` — webhook opcional de Stripe
 
 ## Nota antes de vender
@@ -144,4 +165,4 @@ Esta es una base funcional para personalizar, no una plataforma auditada para op
 
 La tienda tiene enlaces visibles a **Mi cuenta** y **Administración**. Los compradores pueden crear cuentas en `/cuenta/crear`; se guarda su correo y un hash de contraseña en la colección `users`. Al comprar mientras están conectados, el pedido incluye el identificador de la cuenta, para que aparezca en su historial. Los pedidos realizados sin iniciar sesión no se asocian retroactivamente a una cuenta.
 
-El registro público solo crea cuentas de cliente. Nunca crea administradores. La administración se autentica exclusivamente con `ADMIN_USERNAME` y `ADMIN_PASSWORD` establecidos en las variables de entorno; las rutas que crean, editan o desactivan productos y cambian pedidos requieren una sesión de administrador. Mantén `ADMIN_PASSWORD` fuerte: `4` solo sirve como configuración temporal de prueba y no es segura para producción.
+El registro público solo crea cuentas de cliente. Nunca crea administradores. La administración se autentica exclusivamente con `ADMIN_USERNAME` y `ADMIN_PASSWORD` establecidos en las variables de entorno; las rutas que crean, editan o desactivan productos y cambian pedidos requieren una sesión de administrador. Mantén `ADMIN_PASSWORD` fuerte: `4` solo sirve como configuración inicial de prueba y no es segura para producción. Cambia la contraseña antes de aceptar compras reales.

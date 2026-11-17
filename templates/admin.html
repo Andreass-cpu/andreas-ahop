@@ -5,11 +5,11 @@
 <header class="admin-topbar">
   <a class="brand" href="{{ url_for('index') }}">{{ store_name }}<span>.</span></a>
   <span class="admin-pill">ADMINISTRACIÓN</span>
-  <div class="admin-user">Sesión iniciada como <strong>{{ session.get('admin_user','andreas') }}</strong> · <a href="{{ url_for('admin_logout') }}">Cerrar sesión</a></div>
+  <div class="admin-user">Sesión iniciada como <strong>{{ session.get('admin_user','vesta') }}</strong> · <a href="{{ url_for('admin_logout') }}">Cerrar sesión</a></div>
 </header>
 <main class="admin-page">
   <div class="admin-welcome">
-    <div><span class="eyebrow">TU NEGOCIO, EN ORDEN</span><h1>Hola, <em>{{ session.get('admin_user','andreas') }}.</em></h1><p>Administra productos, existencias y compras de tus clientes. Los cambios se guardan en MongoDB Atlas.</p></div>
+    <div><span class="eyebrow">TU NEGOCIO, EN ORDEN</span><h1>Hola, <em>{{ session.get('admin_user','vesta') }}.</em></h1><p>Administra productos, existencias y compras de tus clientes. Los cambios se guardan en MongoDB Atlas.</p></div>
     <a href="{{ url_for('index') }}" class="button button-outline">Ver tienda ↗</a>
   </div>
   {% if db_error %}<div class="database-warning">{{ db_error }}</div>{% endif %}
@@ -28,7 +28,10 @@
         <label class="field">Nombre<input name="name" required maxlength="120"></label>
         <label class="field">Categoría<input name="category" required placeholder="Mujer, Hombre, Calzado..."></label>
         <label class="field">Precio ({{ currency }})<input name="price" type="number" min="0" step="0.01" required></label>
-        <label class="field">Inventario<input name="stock" type="number" min="0" step="1" required></label>
+        <label class="field">Sección de la tienda<select name="product_type" id="productType"><option value="regular">Ropa normal · compra directa</option><option value="exclusive">Edición exclusiva · reservar 5 minutos</option></select><small>Las exclusivas aparecen en su propia sección y tienen cupo máximo de compradores.</small></label>
+        <label class="field" id="stockModeGroup">Inventario de ropa normal<select name="stock_mode" id="stockMode"><option value="limited">Limitado · existencias físicas</option><option value="infinite">Ilimitado · sin tope de existencias</option></select></label>
+        <label class="field" id="stockFieldGroup">Existencias disponibles<input name="stock" type="number" min="1" step="1" value="1" required><small>Se descuentan cuando se confirma una compra normal.</small></label>
+        <label class="field" id="exclusiveLimitGroup" hidden>Cupo máximo de compradores<input name="exclusive_limit" type="number" min="1" step="1" value="1"><small>Una unidad por visitante. El cupo se bloquea en Atlas durante 5 minutos al apartar.</small></label>
         <label class="field full">Descripción<textarea name="description" rows="2"></textarea></label>
         <label class="field full">URL de imagen<input name="image" type="url" placeholder="https://..."></label>
         <label class="field">Tallas separadas por coma<input name="sizes" placeholder="XS, S, M, L"></label>
@@ -37,15 +40,17 @@
       <div class="editor-actions"><button class="button button-dark" type="submit">Guardar en Atlas</button><button class="button button-outline" id="cancelProduct" type="button">Cancelar</button></div>
       <p class="admin-message" id="productMessage" role="status"></p>
     </form>
-    <div class="admin-table-wrap"><table class="admin-table"><thead><tr><th>Producto</th><th>Categoría</th><th>Precio</th><th>Stock</th><th>Estado</th><th>Acciones</th></tr></thead><tbody id="productsTable">
+    <div class="admin-table-wrap"><table class="admin-table"><thead><tr><th>Producto</th><th>Sección</th><th>Categoría</th><th>Precio</th><th>Disponibilidad / cupo</th><th>Estado</th><th>Acciones</th></tr></thead><tbody id="productsTable">
       {% for p in products %}
       <tr data-id="{{ p.id }}" data-product='{{ p|tojson|forceescape }}'>
         <td><div class="admin-product"><img src="{{ p.image or url_for('static', filename='images/product-placeholder.svg') }}" alt="" onerror="this.onerror=null;this.src='{{ url_for('static', filename='images/product-placeholder.svg') }}'"><strong>{{ p.name }}</strong></div></td>
-        <td>{{ p.category }}</td><td>${{ '%.2f'|format(p.price) }}</td><td>{{ p.stock }}</td>
+        <td>{% if p.product_type == 'exclusive' %}<span class="status-chip stock-limited">Exclusiva</span>{% else %}<span class="status-chip stock-infinite">Ropa normal</span>{% endif %}</td>
+        <td>{{ p.category }}</td><td>${{ '%.2f'|format(p.price) }}</td>
+        <td>{% if p.product_type == 'exclusive' %}<strong>Cupo {{ p.exclusive_limit }} compradores</strong><small>{{ p.available_stock }} libres · {{ p.reserved }} apartados · {{ p.sold }} comprados</small>{% elif p.stock_mode == 'infinite' %}<span class="status-chip stock-infinite">Ilimitada</span>{% else %}<span class="status-chip stock-limited">{{ p.available_stock }} disponibles</span>{% endif %}</td>
         <td><span class="status-chip {% if p.active %}status-active{% else %}status-cancelled{% endif %}">{{ 'Activo' if p.active else 'Oculto' }}</span></td>
         <td class="table-actions"><button class="mini-button" data-edit-product="{{ p.id }}">Editar</button>{% if p.active %}<button class="mini-button danger" data-delete-product="{{ p.id }}">Quitar</button>{% else %}<button class="mini-button" data-reactivate-product="{{ p.id }}">Reactivar</button>{% endif %}</td>
       </tr>
-      {% else %}<tr><td colspan="6" class="table-empty">No hay productos todavía. Usa “Nuevo producto” para añadir el primero.</td></tr>{% endfor %}
+      {% else %}<tr><td colspan="7" class="table-empty">No hay productos todavía. Usa “Nuevo producto” para añadir el primero.</td></tr>{% endfor %}
     </tbody></table></div>
   </section>
 

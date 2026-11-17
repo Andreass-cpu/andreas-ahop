@@ -62,3 +62,6 @@ html[data-theme="dark"] .account-order-status.status-delivered{background:#34412
 html[data-theme="dark"] .account-order-status.status-cancelled{background:#472d2a;color:#f0b9af}
 html[data-theme="dark"] .account-order-status.status-shipped{background:#293b40;color:#b9e0e8}
 html[data-theme="dark"] .account-switch a{color:var(--ink)}
+html[data-theme="dark"] .exclusive-collection{background:#1b1e19}
+html[data-theme="dark"] .exclusive-explainer{background:#30352a;border:1px solid #4c5341}
+html[data-theme="dark"] .exclusive-cap-note{color:#b7bdac}

@@ -2,7 +2,8 @@ import hashlib
 import hmac
 import os
 import re
-from datetime import datetime, timezone
+import uuid
+from datetime import datetime, timedelta, timezone
 from functools import wraps
 
 from bson import ObjectId
@@ -28,15 +29,16 @@ app.config.update(
 
 MONGODB_URI = os.getenv("MONGODB_URI", "").strip()
 MONGO_DB_NAME = os.getenv("MONGO_DB_NAME", "vesta_fashion").strip() or "vesta_fashion"
-ADMIN_USERNAME = os.getenv("ADMIN_USERNAME", "andreas")
-# Keep the password in Render Environment / local .env; never bake it into public source.
-ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "")
+ADMIN_USERNAME = os.getenv("ADMIN_USERNAME", "vesta")
+# Credenciales solicitadas para la instalación inicial. Cámbialas antes de abrir la tienda al público.
+ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "4")
 STRIPE_SECRET_KEY = os.getenv("STRIPE_SECRET_KEY", "").strip()
 STRIPE_WEBHOOK_SECRET = os.getenv("STRIPE_WEBHOOK_SECRET", "").strip()
 STORE_NAME = os.getenv("STORE_NAME", "VESTA")
 CURRENCY = os.getenv("CURRENCY", "mxn").lower()
 
-mongo_client = MongoClient(MONGODB_URI, serverSelectionTimeoutMS=5000) if MONGODB_URI else None
+mongo_client = MongoClient(MONGODB_URI, serverSelectionTimeoutMS=5000, tz_aware=True) if MONGODB_URI else None
+RESERVATION_MINUTES = 5
 
 SEED_PRODUCTS = [
     {"name": "Chaqueta urbana", "category": "Mujer", "description": "Chaqueta ligera de corte relajado para elevar cualquier look diario.", "price": 899, "sizes": ["XS", "S", "M", "L"], "colors": ["Negro", "Arena"], "image": "https://images.unsplash.com/photo-1529139574466-a303027c1d8b?auto=format&fit=crop&w=900&q=85", "stock": 14},
@@ -59,6 +61,51 @@ SEED_PRODUCTS = [
     {"name": "Chamarra Denim", "category": "Hombre", "description": "Una capa imprescindible con vibra relajada y acabado denim.", "price": 999, "sizes": ["S", "M", "L", "XL"], "colors": ["Azul", "Negro"], "image": "https://images.unsplash.com/photo-1551028719-00167b16eac5?auto=format&fit=crop&w=900&q=85", "stock": 8},
 ]
 
+# Muestras originales de VESTA para la sección de ediciones exclusivas.
+# Son diseños de inspiración de lujo/streetwear, no artículos oficiales de otras marcas.
+SEED_EXCLUSIVE_PRODUCTS = [
+    {
+        "name": "Camisa Heritage Verde — VESTA Drop 01",
+        "category": "Hombre",
+        "description": "Camisa satinada de edición especial con patrón geométrico verde y marfil, inspirada en la estética del lujo italiano. Diseño original VESTA; no es una prenda oficial de Gucci ni de otra marca.",
+        "price": 2490,
+        "sizes": ["S", "M", "L", "XL"],
+        "colors": ["Verde bosque"],
+        "image": "/static/images/vesta-heritage-shirt.webp",
+        "exclusive_limit": 3,
+    },
+    {
+        "name": "Hoodie Street Noir — VESTA Drop 02",
+        "category": "Hombre",
+        "description": "Sudadera negra de felpa premium, corte oversize y gráfica original VESTA, inspirada en la cultura streetwear de diseñador. No es un artículo oficial de VLONE ni de otra marca.",
+        "price": 1990,
+        "sizes": ["S", "M", "L", "XL"],
+        "colors": ["Negro"],
+        "image": "https://images.unsplash.com/photo-1556821840-3a63f95609a7?auto=format&fit=crop&w=900&q=85",
+        "exclusive_limit": 2,
+    },
+    {
+        "name": "Chaqueta Biker Eclipse — VESTA Drop 03",
+        "category": "Hombre",
+        "description": "Chaqueta estilo biker en acabado negro, herrajes metálicos y silueta estructurada. Lanzamiento limitado de VESTA.",
+        "price": 3290,
+        "sizes": ["S", "M", "L", "XL"],
+        "colors": ["Negro"],
+        "image": "https://images.unsplash.com/photo-1551028719-00167b16eac5?auto=format&fit=crop&w=900&q=85",
+        "exclusive_limit": 1,
+    },
+    {
+        "name": "Blazer Atelier Noire — VESTA Drop 04",
+        "category": "Mujer",
+        "description": "Blazer de sastrería contemporánea, hombro definido y acabado elegante. Una edición VESTA de inspiración premium con cupo reducido.",
+        "price": 2890,
+        "sizes": ["XS", "S", "M", "L"],
+        "colors": ["Negro"],
+        "image": "https://images.unsplash.com/photo-1591047139829-d91aecb6caea?auto=format&fit=crop&w=900&q=85",
+        "exclusive_limit": 2,
+    },
+]
+
 
 def utcnow():
     return datetime.now(timezone.utc)
@@ -76,12 +123,46 @@ def sample_product_id(name):
 
 
 def fallback_products():
-    """Show the sample catalog even before Atlas credentials are configured."""
+    """Show regular and exclusive demo catalog entries without Atlas credentials."""
     now = utcnow()
-    return [json_product({**p, "_id": sample_product_id(p["name"]), "active": True, "created_at": now, "updated_at": now}) for p in SEED_PRODUCTS]
+    regular = [
+        json_product({**p, "_id": sample_product_id(p["name"]), "product_type": "regular", "stock_mode": "limited", "reserved": 0, "active": True, "created_at": now, "updated_at": now})
+        for p in SEED_PRODUCTS
+    ]
+    exclusive = [
+        json_product({**p, "_id": sample_product_id(p["name"]), "product_type": "exclusive", "stock_mode": "limited", "stock": p["exclusive_limit"], "reserved": 0, "active": True, "created_at": now, "updated_at": now})
+        for p in SEED_EXCLUSIVE_PRODUCTS
+    ]
+    return regular + exclusive
 
 
 def seed_products(db):
+    # Migrate the previous catalogue model without losing the old distinction:
+    # seed/demo pieces are regular; custom limited products from the former admin form
+    # become exclusive drops; products with no stock_mode default to regular.
+    seed_names = [product["name"] for product in SEED_PRODUCTS]
+    db.products.update_many(
+        {"product_type": {"$exists": False}, "name": {"$in": seed_names}},
+        {"$set": {"product_type": "regular"}},
+    )
+    db.products.update_many(
+        {"product_type": {"$exists": False}, "stock_mode": "limited"},
+        {"$set": {"product_type": "exclusive"}},
+    )
+    db.products.update_many(
+        {"product_type": {"$exists": False}},
+        {"$set": {"product_type": "regular"}},
+    )
+    db.products.update_many({"stock_mode": {"$exists": False}}, {"$set": {"stock_mode": "limited"}})
+    db.products.update_many({"reserved": {"$exists": False}}, {"$set": {"reserved": 0}})
+    for product in db.products.find(
+        {"product_type": "exclusive", "exclusive_limit": {"$exists": False}},
+        {"_id": 1, "stock": 1},
+    ):
+        db.products.update_one(
+            {"_id": product["_id"]},
+            {"$set": {"exclusive_limit": int(product.get("stock", 0))}},
+        )
     # Add missing examples even if this database already has a few products.
     # Existing products and their IDs are never overwritten.
     now = utcnow()
@@ -91,10 +172,37 @@ def seed_products(db):
         sample_id = sample_product_id(product["name"])
         if db.products.find_one({"_id": sample_id}, {"_id": 1}):
             continue
-        db.products.insert_one({**product, "_id": sample_id, "active": True, "created_at": now, "updated_at": now})
+        db.products.insert_one({**product, "_id": sample_id, "product_type": "regular", "stock_mode": "limited", "reserved": 0, "active": True, "created_at": now, "updated_at": now})
+
+    # Insertar las exclusivas de muestra una sola vez; nunca reemplazar inventario existente.
+    for product in SEED_EXCLUSIVE_PRODUCTS:
+        if db.products.find_one({"name": product["name"]}, {"_id": 1}):
+            continue
+        sample_id = sample_product_id(product["name"])
+        if db.products.find_one({"_id": sample_id}, {"_id": 1}):
+            continue
+        limit = int(product["exclusive_limit"])
+        db.products.insert_one({
+            **product,
+            "_id": sample_id,
+            "product_type": "exclusive",
+            "stock_mode": "limited",
+            "stock": limit,
+            "reserved": 0,
+            "active": True,
+            "created_at": now,
+            "updated_at": now,
+        })
 
 
 def json_product(doc):
+    product_type = doc.get("product_type", "regular")
+    stock_mode = "limited" if product_type == "exclusive" else doc.get("stock_mode", "limited")
+    stock = int(doc.get("stock", 0))
+    reserved = int(doc.get("reserved", 0))
+    available = None if stock_mode == "infinite" else max(stock - reserved, 0)
+    exclusive_limit = int(doc.get("exclusive_limit", stock)) if product_type == "exclusive" else None
+    sold = max(exclusive_limit - stock, 0) if exclusive_limit is not None else 0
     return {
         "id": str(doc["_id"]),
         "name": doc.get("name", "Producto"),
@@ -104,7 +212,14 @@ def json_product(doc):
         "sizes": doc.get("sizes", ["Única"]),
         "colors": doc.get("colors", ["Único"]),
         "image": doc.get("image", ""),
-        "stock": int(doc.get("stock", 0)),
+        "stock": stock,
+        "reserved": reserved,
+        "available_stock": available,
+        "stock_mode": stock_mode,
+        "product_type": product_type,
+        "exclusive": product_type == "exclusive",
+        "exclusive_limit": exclusive_limit,
+        "sold": sold,
         "active": bool(doc.get("active", True)),
     }
 
@@ -123,8 +238,7 @@ def admin_required(fn):
 def valid_product_payload(data, partial=False):
     errors = []
     result = {}
-    text_fields = ("name", "category", "description", "image")
-    for field in text_fields:
+    for field in ("name", "category", "description", "image"):
         if field in data:
             value = str(data.get(field, "")).strip()
             if field in ("name", "category") and not value:
@@ -132,6 +246,7 @@ def valid_product_payload(data, partial=False):
             result[field] = value
         elif not partial and field in ("name", "category"):
             errors.append(f"El campo {field} es obligatorio.")
+
     if "price" in data or not partial:
         try:
             price = float(data.get("price", 0))
@@ -140,14 +255,51 @@ def valid_product_payload(data, partial=False):
             result["price"] = round(price, 2)
         except (ValueError, TypeError):
             errors.append("El precio debe ser un número positivo.")
-    if "stock" in data or not partial:
-        try:
-            stock = int(data.get("stock", 0))
-            if stock < 0 or stock > 10000000:
-                raise ValueError
-            result["stock"] = stock
-        except (ValueError, TypeError):
-            errors.append("El inventario debe ser un entero igual o mayor que cero.")
+
+    product_type = None
+    if "product_type" in data or not partial:
+        product_type = str(data.get("product_type", "regular")).lower()
+        if product_type not in ("regular", "exclusive"):
+            errors.append("Elige ropa normal o edición exclusiva.")
+        else:
+            result["product_type"] = product_type
+
+    stock_mode = None
+    if product_type == "exclusive":
+        result["stock_mode"] = "limited"
+        raw_limit = data.get("exclusive_limit", data.get("stock"))
+        if raw_limit is not None or not partial:
+            try:
+                limit = int(raw_limit if raw_limit is not None else 0)
+                if limit < 1 or limit > 10000000:
+                    raise ValueError
+                result["exclusive_limit"] = limit
+            except (ValueError, TypeError):
+                errors.append("El cupo máximo de compradores debe ser un entero mayor que cero.")
+    elif product_type == "regular":
+        if "stock_mode" in data or not partial:
+            stock_mode = str(data.get("stock_mode", "limited")).lower()
+            if stock_mode not in ("limited", "infinite"):
+                errors.append("Elige inventario limitado o ilimitado para ropa normal.")
+            else:
+                result["stock_mode"] = stock_mode
+        if stock_mode == "infinite":
+            result["stock"] = 0
+        elif "stock" in data or not partial:
+            try:
+                stock = int(data.get("stock", 0))
+                if stock < 1 or stock > 10000000:
+                    raise ValueError
+                result["stock"] = stock
+            except (ValueError, TypeError):
+                errors.append("Las existencias deben ser un entero mayor que cero.")
+    elif partial and "stock_mode" in data:
+        stock_mode = str(data.get("stock_mode", "limited")).lower()
+        if stock_mode not in ("limited", "infinite"):
+            errors.append("El tipo de inventario no es válido.")
+        else:
+            result["stock_mode"] = stock_mode
+
     for field, default in (("sizes", ["Única"]), ("colors", ["Único"])):
         if field in data or not partial:
             value = data.get(field, default)
@@ -166,28 +318,234 @@ def valid_product_payload(data, partial=False):
     return result, errors
 
 
+def _product_is_limited(product):
+    # Older documents without stock_mode are treated as limited inventory.
+    return product.get("stock_mode", "limited") != "infinite"
+
+
 def reserve_stock(db, clean_items):
-    reserved = []
+    """Immediately consume stock for normal (non-temporary) checkout items."""
+    committed = []
     for item in clean_items:
+        product_id = ObjectId(item["product_id"])
+        product = db.products.find_one({"_id": product_id, "active": True, "product_type": {"$ne": "exclusive"}})
+        if not product:
+            release_stock(db, committed)
+            return None
+        if not _product_is_limited(product):
+            # Re-check the mode atomically so an admin edit cannot race this checkout.
+            still_infinite = db.products.find_one({"_id": product_id, "active": True, "product_type": {"$ne": "exclusive"}, "stock_mode": "infinite"}, {"_id": 1})
+            if not still_infinite:
+                release_stock(db, committed)
+                return None
+            committed.append({**item, "stock_mode": "infinite"})
+            continue
         updated = db.products.find_one_and_update(
-            {"_id": ObjectId(item["product_id"]), "active": True, "stock": {"$gte": item["quantity"]}},
+            {
+                "_id": product_id,
+                "active": True,
+                "product_type": {"$ne": "exclusive"},
+                "$or": [{"stock_mode": "limited"}, {"stock_mode": {"$exists": False}}, {"stock_mode": None}],
+                "$expr": {"$gte": [{"$subtract": ["$stock", {"$ifNull": ["$reserved", 0]}]}, item["quantity"]]},
+            },
             {"$inc": {"stock": -item["quantity"]}, "$set": {"updated_at": utcnow()}},
             return_document=ReturnDocument.AFTER,
         )
         if updated is None:
-            for previous in reserved:
-                db.products.update_one({"_id": ObjectId(previous["product_id"])}, {"$inc": {"stock": previous["quantity"]}})
-            return False
-        reserved.append(item)
-    return True
+            release_stock(db, committed)
+            return None
+        committed.append({**item, "stock_mode": "limited"})
+    return committed
 
 
 def release_stock(db, items):
+    """Return stock consumed by an order; unlimited products have no counter."""
     for item in items:
         try:
-            db.products.update_one({"_id": ObjectId(item["product_id"])}, {"$inc": {"stock": int(item["quantity"])}},)
+            product_id = ObjectId(item["product_id"])
+            mode = item.get("stock_mode")
+            if mode is None:
+                product = db.products.find_one({"_id": product_id}, {"stock_mode": 1}) or {}
+                mode = product.get("stock_mode", "limited")
+            if mode != "infinite":
+                db.products.update_one({"_id": product_id}, {"$inc": {"stock": int(item["quantity"])} , "$set": {"updated_at": utcnow()}})
         except Exception:
             app.logger.exception("No se pudo devolver inventario para el pedido")
+
+
+def ensure_reservation_indexes(db):
+    db.reservations.create_index("reservation_id", unique=True)
+    db.reservations.create_index([("status", 1), ("expires_at", 1)])
+
+
+def _release_reservation_items(db, reservation, mongo_session):
+    for item in reservation.get("items", []):
+        if item.get("stock_mode", "limited") == "infinite":
+            continue
+        db.products.update_one(
+            {"_id": ObjectId(item["product_id"]), "reserved": {"$gte": int(item["quantity"])}},
+            {"$inc": {"reserved": -int(item["quantity"])}, "$set": {"updated_at": utcnow()}},
+            session=mongo_session,
+        )
+
+
+def expire_reservation(db, reservation_id):
+    """Release an expired hold exactly once, inside an Atlas transaction."""
+    if not reservation_id:
+        return False
+    now = utcnow()
+    def operation(mongo_session):
+        reservation = db.reservations.find_one({"reservation_id": reservation_id, "status": "active"}, session=mongo_session)
+        if not reservation or reservation.get("expires_at") > now:
+            return False
+        _release_reservation_items(db, reservation, mongo_session)
+        db.reservations.delete_one({"_id": reservation["_id"], "status": "active"}, session=mongo_session)
+        return True
+    with db.client.start_session() as mongo_session:
+        return mongo_session.with_transaction(operation)
+
+
+def expire_due_reservations(db, limit=100):
+    """Small lazy sweeper; it also frees holds left by visitors who close the page."""
+    now = utcnow()
+    ensure_reservation_indexes(db)
+    due_ids = [row["reservation_id"] for row in db.reservations.find(
+        {"status": "active", "expires_at": {"$lte": now}}, {"reservation_id": 1}
+    ).limit(limit)]
+    for reservation_id in due_ids:
+        try:
+            expire_reservation(db, reservation_id)
+        except Exception:
+            app.logger.exception("No se pudo liberar la reserva vencida %s", reservation_id)
+
+
+def reservation_view(db, reservation):
+    product_ids = [ObjectId(item["product_id"]) for item in reservation.get("items", [])]
+    products = {str(doc["_id"]): doc for doc in db.products.find({"_id": {"$in": product_ids}})}
+    items = []
+    for item in reservation.get("items", []):
+        product = products.get(item["product_id"])
+        if not product:
+            continue
+        items.append({
+            "product_id": item["product_id"], "name": product.get("name", "Producto"),
+            "image": product.get("image", ""), "price": float(product.get("price", 0)),
+            "quantity": int(item["quantity"]), "size": item.get("size", "Única"),
+            "color": item.get("color", "Único"), "stock_mode": item.get("stock_mode", "limited"),
+        })
+    expires_at = reservation["expires_at"]
+    if expires_at.tzinfo is None:
+        expires_at = expires_at.replace(tzinfo=timezone.utc)
+    return {"active": True, "reservation_id": reservation["reservation_id"], "expires_at": expires_at.isoformat(), "items": items}
+
+
+def create_temporary_reservation(db, product_id, quantity, size, color):
+    ensure_reservation_indexes(db)
+    candidate_id = session.get("reservation_id") or uuid.uuid4().hex
+    # Clear this visitor's previous expired reservation before adding a new hold.
+    expire_reservation(db, candidate_id)
+    now = utcnow()
+    expires_at = now + timedelta(minutes=RESERVATION_MINUTES)
+
+    def operation(mongo_session):
+        reservation = db.reservations.find_one({"reservation_id": candidate_id, "status": "active"}, session=mongo_session)
+        if reservation and reservation.get("expires_at") <= now:
+            _release_reservation_items(db, reservation, mongo_session)
+            db.reservations.delete_one({"_id": reservation["_id"]}, session=mongo_session)
+            reservation = None
+        product_oid = ObjectId(product_id)
+        product = db.products.find_one({"_id": product_oid, "active": True}, session=mongo_session)
+        if not product:
+            raise ValueError("Este artículo ya no está disponible.")
+        if size not in product.get("sizes", ["Única"]):
+            raise ValueError("La talla seleccionada ya no está disponible.")
+        if color not in product.get("colors", ["Único"]):
+            raise ValueError("El color seleccionado ya no está disponible.")
+        if product.get("product_type", "regular") != "exclusive":
+            raise ValueError("Esta prenda pertenece a Ropa normal. Agrégala a la bolsa para comprarla.")
+        if any(line.get("product_id") == product_id for line in (reservation or {}).get("items", [])):
+            raise ValueError("Ya tienes apartado este artículo. Cada visitante puede reservar una unidad de cada edición exclusiva.")
+        updated = db.products.update_one(
+            {
+                "_id": product_oid, "active": True,
+                "product_type": "exclusive",
+                "$expr": {"$gte": [{"$subtract": ["$stock", {"$ifNull": ["$reserved", 0]}]}, quantity]},
+            },
+            {"$inc": {"reserved": quantity}, "$set": {"updated_at": now}},
+            session=mongo_session,
+        )
+        if not updated.matched_count:
+            raise ValueError("Ya no hay cupos disponibles para esta edición exclusiva.")
+
+        if reservation is None:
+            reservation = {
+                "reservation_id": candidate_id, "items": [], "status": "active",
+                "created_at": now, "expires_at": expires_at,
+            }
+            db.reservations.insert_one(reservation, session=mongo_session)
+            reservation = db.reservations.find_one({"reservation_id": candidate_id}, session=mongo_session)
+        reservation.setdefault("items", []).append({
+            "product_id": product_id, "quantity": 1, "size": size, "color": color,
+            "stock_mode": "limited", "product_type": "exclusive",
+        })
+        db.reservations.replace_one({"_id": reservation["_id"]}, reservation, session=mongo_session)
+        return reservation["expires_at"]
+
+    with db.client.start_session() as mongo_session:
+        final_expiry = mongo_session.with_transaction(operation)
+    session["reservation_id"] = candidate_id
+    return {"reservation_id": candidate_id, "expires_at": final_expiry.isoformat()}
+
+
+def cancel_temporary_reservation(db, reservation_id):
+    now = utcnow()
+    def operation(mongo_session):
+        reservation = db.reservations.find_one({"reservation_id": reservation_id, "status": "active"}, session=mongo_session)
+        if not reservation:
+            return False
+        _release_reservation_items(db, reservation, mongo_session)
+        db.reservations.delete_one({"_id": reservation["_id"]}, session=mongo_session)
+        return True
+    with db.client.start_session() as mongo_session:
+        return mongo_session.with_transaction(operation)
+
+
+def confirm_reservation_and_insert_order(db, reservation_id, order):
+    def operation(mongo_session):
+        now = utcnow()
+        reservation = db.reservations.find_one(
+            {"reservation_id": reservation_id, "status": "active", "expires_at": {"$gt": now}},
+            session=mongo_session,
+        )
+        if not reservation:
+            raise ValueError("Tu apartado venció o ya no está activo. Vuelve a reservar el artículo.")
+        stock_items = []
+        for item in reservation.get("items", []):
+            product_id = ObjectId(item["product_id"])
+            product = db.products.find_one({"_id": product_id, "active": True}, session=mongo_session)
+            if not product:
+                raise ValueError("Una prenda de tu apartado dejó de estar disponible.")
+            if product.get("product_type", "regular") != "exclusive":
+                raise ValueError("El apartado incluye una prenda que ya no es exclusiva. Contacta a VESTA.")
+            mode = "limited"
+            quantity = int(item["quantity"])
+            if mode == "infinite":
+                stock_items.append({**item, "stock_mode": "infinite"})
+            else:
+                updated = db.products.update_one(
+                    {"_id": product_id, "active": True, "reserved": {"$gte": quantity}, "stock": {"$gte": quantity}},
+                    {"$inc": {"stock": -quantity, "reserved": -quantity}, "$set": {"updated_at": now}},
+                    session=mongo_session,
+                )
+                if not updated.matched_count:
+                    raise ValueError("No se pudo confirmar el inventario apartado. Vuelve a intentarlo.")
+                stock_items.append({**item, "stock_mode": "limited"})
+        order["stock_items"] = stock_items
+        db.orders.insert_one(order, session=mongo_session)
+        db.reservations.delete_one({"_id": reservation["_id"]}, session=mongo_session)
+        return order["_id"], stock_items
+    with db.client.start_session() as mongo_session:
+        return mongo_session.with_transaction(operation)
 
 
 def sanitize_order(order):
@@ -228,13 +586,16 @@ def index():
     try:
         db = get_db()
         seed_products(db)
+        expire_due_reservations(db)
         products = [json_product(doc) for doc in db.products.find({"active": True}).sort("created_at", -1)]
     except (RuntimeError, PyMongoError) as exc:
         app.logger.warning("No se pudo cargar MongoDB: %s", exc)
         error = "No se pudo conectar con MongoDB Atlas. Se muestra el catálogo de ejemplo; configura MONGODB_URI para guardar pedidos e inventario."
         products = fallback_products()
         demo_mode = True
-    return render_template("index.html", products=products, db_error=error, demo_mode=demo_mode)
+    normal_products = [product for product in products if product.get("product_type", "regular") != "exclusive"]
+    exclusive_products = [product for product in products if product.get("product_type", "regular") == "exclusive"]
+    return render_template("index.html", products=products, normal_products=normal_products, exclusive_products=exclusive_products, db_error=error, demo_mode=demo_mode)
 
 
 @app.get("/health")
@@ -251,6 +612,7 @@ def api_products():
     try:
         db = get_db()
         seed_products(db)
+        expire_due_reservations(db)
         query = {"active": True}
         category = request.args.get("category", "").strip()
         if category and category.lower() != "todos":
@@ -265,6 +627,62 @@ def api_products():
         return jsonify({"error": "No se pudieron cargar los productos. Revisa la conexión con MongoDB."}), 503
 
 
+@app.get("/api/reservations/current")
+def api_reservation_current():
+    try:
+        db = get_db()
+        expire_due_reservations(db)
+        reservation_id = session.get("reservation_id")
+        if not reservation_id:
+            return jsonify({"active": False})
+        reservation = db.reservations.find_one({"reservation_id": reservation_id, "status": "active", "expires_at": {"$gt": utcnow()}})
+        if not reservation:
+            session.pop("reservation_id", None)
+            return jsonify({"active": False})
+        return jsonify(reservation_view(db, reservation))
+    except Exception:
+        app.logger.exception("No se pudo consultar el apartado temporal")
+        return jsonify({"error": "No se pudo consultar tu apartado. Inténtalo de nuevo."}), 503
+
+
+@app.post("/api/reservations")
+def api_reservation_create():
+    data = request.get_json(silent=True) or {}
+    product_id = str(data.get("product_id", ""))
+    try:
+        quantity = int(data.get("quantity", 1))
+    except (TypeError, ValueError):
+        return jsonify({"error": "La cantidad no es válida."}), 400
+    if not ObjectId.is_valid(product_id):
+        return jsonify({"error": "El artículo seleccionado no es válido."}), 400
+    if quantity != 1:
+        return jsonify({"error": "Las ediciones exclusivas permiten una unidad por visitante."}), 400
+    size = str(data.get("size", "Única"))[:40]
+    color = str(data.get("color", "Único"))[:40]
+    try:
+        result = create_temporary_reservation(get_db(), product_id, quantity, size, color)
+        return jsonify({"ok": True, **result, "message": "Artículo apartado durante 5 minutos."})
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 409
+    except Exception:
+        app.logger.exception("No se pudo crear el apartado temporal")
+        return jsonify({"error": "No se pudo apartar el artículo. Inténtalo de nuevo."}), 503
+
+
+@app.post("/api/reservations/cancel")
+def api_reservation_cancel():
+    reservation_id = session.get("reservation_id")
+    if not reservation_id:
+        return jsonify({"ok": True, "active": False})
+    try:
+        cancel_temporary_reservation(get_db(), reservation_id)
+        session.pop("reservation_id", None)
+        return jsonify({"ok": True, "active": False})
+    except Exception:
+        app.logger.exception("No se pudo cancelar el apartado")
+        return jsonify({"error": "No se pudo cancelar el apartado. Inténtalo de nuevo."}), 503
+
+
 @app.get("/checkout")
 def checkout():
     if not MONGODB_URI:
@@ -276,8 +694,8 @@ def checkout():
 def api_checkout():
     data = request.get_json(silent=True) or {}
     customer = data.get("customer") or {}
-    raw_items = data.get("items") or []
     payment_method = str(data.get("payment_method", "cod")).lower()
+    reservation_id = str(data.get("reservation_id", ""))
     required = {"name": "Nombre", "email": "Correo", "phone": "Teléfono", "address": "Dirección", "city": "Ciudad"}
     missing = [label for key, label in required.items() if not str(customer.get(key, "")).strip()]
     if missing:
@@ -288,31 +706,52 @@ def api_checkout():
         return jsonify({"error": "Método de pago no válido."}), 400
     if payment_method == "card" and not STRIPE_SECRET_KEY:
         return jsonify({"error": "El pago con tarjeta aún no está configurado. Configura STRIPE_SECRET_KEY en Render o elige pago al recibir."}), 400
-    if not isinstance(raw_items, list) or not raw_items:
-        return jsonify({"error": "Tu carrito está vacío."}), 400
+
+    reserved_checkout = bool(reservation_id)
+    if reserved_checkout and reservation_id != session.get("reservation_id"):
+        return jsonify({"error": "No encontramos tu apartado en esta sesión. Vuelve a reservar el artículo."}), 409
+
     clean_items = []
     try:
-        for raw in raw_items[:40]:
-            product_id = str(raw.get("product_id", ""))
-            if not ObjectId.is_valid(product_id):
-                return jsonify({"error": "Hay un producto inválido en el carrito. Vacía el carrito y vuelve a intentarlo."}), 400
-            quantity = int(raw.get("quantity", 1))
-            if quantity < 1 or quantity > 20:
-                return jsonify({"error": "La cantidad por producto debe estar entre 1 y 20."}), 400
-            clean_items.append({"product_id": product_id, "quantity": quantity, "size": str(raw.get("size", "Única"))[:40], "color": str(raw.get("color", "Único"))[:40]})
+        if reserved_checkout:
+            db = get_db()
+            expire_due_reservations(db)
+            reservation = db.reservations.find_one({"reservation_id": reservation_id, "status": "active", "expires_at": {"$gt": utcnow()}})
+            if not reservation:
+                session.pop("reservation_id", None)
+                return jsonify({"error": "Tu apartado venció. Vuelve a reservar la prenda para continuar."}), 409
+            for item in reservation.get("items", []):
+                clean_items.append({"product_id": str(item["product_id"]), "quantity": int(item["quantity"]), "size": str(item.get("size", "Única"))[:40], "color": str(item.get("color", "Único"))[:40], "product_type": "exclusive"})
+        else:
+            raw_items = data.get("items") or []
+            if not isinstance(raw_items, list) or not raw_items:
+                return jsonify({"error": "Tu bolsa está vacía."}), 400
+            for raw in raw_items[:40]:
+                product_id = str(raw.get("product_id", ""))
+                if not ObjectId.is_valid(product_id):
+                    return jsonify({"error": "Hay un producto inválido en el carrito. Vacía el carrito y vuelve a intentarlo."}), 400
+                quantity = int(raw.get("quantity", 1))
+                if quantity < 1 or quantity > 20:
+                    return jsonify({"error": "La cantidad por producto debe estar entre 1 y 20."}), 400
+                clean_items.append({"product_id": product_id, "quantity": quantity, "size": str(raw.get("size", "Única"))[:40], "color": str(raw.get("color", "Único"))[:40]})
     except (TypeError, ValueError):
         return jsonify({"error": "La cantidad de un producto no es válida."}), 400
 
     try:
         db = get_db()
         product_ids = [ObjectId(item["product_id"]) for item in clean_items]
-        product_docs = {str(p["_id"]): p for p in db.products.find({"_id": {"$in": product_ids}, "active": True})}
+        product_docs = {str(product["_id"]): product for product in db.products.find({"_id": {"$in": product_ids}, "active": True})}
         if len(product_docs) != len(set(item["product_id"] for item in clean_items)):
-            return jsonify({"error": "Un producto ya no está disponible. Actualiza el carrito."}), 409
+            return jsonify({"error": "Un producto ya no está disponible. Actualiza el apartado o la bolsa."}), 409
         detail_items = []
         subtotal = 0
         for item in clean_items:
             product = product_docs[item["product_id"]]
+            actual_type = product.get("product_type", "regular")
+            if reserved_checkout and actual_type != "exclusive":
+                return jsonify({"error": "El apartado solo puede contener prendas de Ediciones exclusivas."}), 409
+            if not reserved_checkout and actual_type == "exclusive":
+                return jsonify({"error": "Esta edición exclusiva requiere un apartado de 5 minutos. Regresa a la sección de exclusivas."}), 409
             if item["size"] not in product.get("sizes", ["Única"]):
                 return jsonify({"error": f"La talla elegida para {product['name']} ya no está disponible."}), 409
             if item["color"] not in product.get("colors", ["Único"]):
@@ -320,19 +759,17 @@ def api_checkout():
             price = float(product.get("price", 0))
             line_total = round(price * item["quantity"], 2)
             subtotal += line_total
-            detail_items.append({"product_id": item["product_id"], "name": product["name"], "image": product.get("image", ""), "price": price, "quantity": item["quantity"], "size": item["size"], "color": item["color"], "line_total": line_total})
+            detail_items.append({"product_id": item["product_id"], "name": product["name"], "image": product.get("image", ""), "price": price, "quantity": item["quantity"], "size": item["size"], "color": item["color"], "product_type": actual_type, "line_total": line_total})
         subtotal = round(subtotal, 2)
         shipping = 0 if subtotal >= 1500 else 99
         total = round(subtotal + shipping, 2)
-        if not reserve_stock(db, clean_items):
-            return jsonify({"error": "No hay suficiente inventario para uno de los artículos. Revisa las cantidades."}), 409
         now = utcnow()
         order = {
+            "_id": ObjectId(),
             "number": f"VST-{now.strftime('%y%m%d')}-{str(ObjectId())[-6:].upper()}",
             "customer": {key: str(customer.get(key, "")).strip()[:200] for key in required.keys()} | {"postal_code": str(customer.get("postal_code", "")).strip()[:30], "notes": str(customer.get("notes", "")).strip()[:500]},
             "customer_account_id": session.get("customer_id") if ObjectId.is_valid(str(session.get("customer_id", ""))) else None,
             "items": detail_items,
-            "stock_items": clean_items,
             "subtotal": subtotal,
             "shipping": shipping,
             "total": total,
@@ -344,12 +781,24 @@ def api_checkout():
             "created_at": now,
             "updated_at": now,
         }
-        try:
-            inserted = db.orders.insert_one(order)
-            order["_id"] = inserted.inserted_id
-        except Exception:
-            release_stock(db, clean_items)
-            raise
+        if reserved_checkout:
+            try:
+                inserted_id, stock_items = confirm_reservation_and_insert_order(db, reservation_id, order)
+            except ValueError as exc:
+                return jsonify({"error": str(exc)}), 409
+            session.pop("reservation_id", None)
+        else:
+            stock_items = reserve_stock(db, clean_items)
+            if stock_items is None:
+                return jsonify({"error": "No hay suficiente inventario para uno de los artículos. Revisa las cantidades."}), 409
+            order["stock_items"] = stock_items
+            try:
+                db.orders.insert_one(order)
+                inserted_id = order["_id"]
+            except Exception:
+                release_stock(db, stock_items)
+                raise
+
         if payment_method == "card":
             try:
                 import stripe
@@ -362,21 +811,21 @@ def api_checkout():
                 checkout_session = stripe.checkout.Session.create(
                     mode="payment", payment_method_types=["card"], line_items=line_items,
                     success_url=url_for("checkout_success", _external=True) + "?session_id={CHECKOUT_SESSION_ID}",
-                    cancel_url=url_for("checkout_cancel", _external=True) + f"?order_id={inserted.inserted_id}",
-                    customer_email=customer["email"], metadata={"order_id": str(inserted.inserted_id)},
+                    cancel_url=url_for("checkout_cancel", _external=True) + f"?order_id={inserted_id}",
+                    customer_email=customer["email"], metadata={"order_id": str(inserted_id)},
                 )
-                db.orders.update_one({"_id": inserted.inserted_id}, {"$set": {"stripe_session_id": checkout_session.id}})
+                db.orders.update_one({"_id": inserted_id}, {"$set": {"stripe_session_id": checkout_session.id}})
                 return jsonify({"redirect_url": checkout_session.url, "order_number": order["number"]})
-            except Exception as exc:
-                release_stock(db, clean_items)
-                db.orders.update_one({"_id": inserted.inserted_id}, {"$set": {"status": "cancelled", "stock_released": True, "updated_at": utcnow()}})
+            except Exception:
+                release_stock(db, stock_items)
+                db.orders.update_one({"_id": inserted_id}, {"$set": {"status": "cancelled", "stock_released": True, "updated_at": utcnow()}})
                 app.logger.exception("No se pudo iniciar checkout de Stripe")
                 return jsonify({"error": "No pudimos iniciar el pago con tarjeta. Revisa la configuración de Stripe o elige pago al recibir."}), 502
         return jsonify({"ok": True, "order_number": order["number"], "redirect_url": url_for("order_success", order_number=order["number"])})
     except (RuntimeError, PyMongoError) as exc:
         app.logger.exception("No se pudo crear el pedido")
         return jsonify({"error": "No se pudo guardar el pedido. Revisa la conexión con MongoDB Atlas."}), 503
-    except Exception as exc:
+    except Exception:
         app.logger.exception("Error inesperado al crear el pedido")
         return jsonify({"error": "Ocurrió un error al procesar el pedido. Inténtalo de nuevo."}), 500
 
@@ -565,8 +1014,12 @@ def customer_dashboard():
 
 @app.route("/admin/login", methods=["GET", "POST"])
 def admin_login():
-    if session.get("is_admin"):
+    if session.get("is_admin") and session.get("admin_user") == ADMIN_USERNAME:
         return redirect(url_for("admin_dashboard"))
+    if session.get("is_admin") and session.get("admin_user") != ADMIN_USERNAME:
+        # Invalidate old admin sessions when the configured username changes.
+        session.pop("is_admin", None)
+        session.pop("admin_user", None)
     if request.method == "POST":
         if not ADMIN_PASSWORD:
             flash("Falta configurar ADMIN_PASSWORD en .env o en Render.", "error")
@@ -595,6 +1048,7 @@ def admin_dashboard():
     try:
         db = get_db()
         seed_products(db)
+        expire_due_reservations(db)
         products = [json_product(p) for p in db.products.find({}).sort("created_at", -1)]
         orders = [sanitize_order(o) for o in db.orders.find({}).sort("created_at", -1).limit(100)]
     except Exception as exc:
@@ -646,7 +1100,15 @@ def api_admin_create_product():
     payload, errors = valid_product_payload(data)
     if errors:
         return jsonify({"error": " ".join(errors)}), 400
-    payload.update({"created_at": utcnow(), "updated_at": utcnow()})
+    product_type = payload.get("product_type", "regular")
+    if product_type == "exclusive":
+        limit = int(payload.pop("exclusive_limit"))
+        payload["stock"] = limit
+        payload["exclusive_limit"] = limit
+        payload["stock_mode"] = "limited"
+    else:
+        payload.pop("exclusive_limit", None)
+    payload.update({"reserved": 0, "created_at": utcnow(), "updated_at": utcnow()})
     try:
         result = get_db().products.insert_one(payload)
         payload["_id"] = result.inserted_id
@@ -669,7 +1131,48 @@ def api_admin_update_product(product_id):
         return jsonify({"error": "No hay campos que actualizar."}), 400
     payload["updated_at"] = utcnow()
     try:
-        result = get_db().products.update_one({"_id": ObjectId(product_id)}, {"$set": payload})
+        db = get_db()
+        product_oid = ObjectId(product_id)
+        current = db.products.find_one({"_id": product_oid})
+        if not current:
+            return jsonify({"error": "No encontramos ese producto."}), 404
+        expire_due_reservations(db)
+        current = db.products.find_one({"_id": product_oid}) or current
+        reserved_count = int(current.get("reserved", 0))
+        current_type = current.get("product_type", "regular")
+        next_type = payload.get("product_type", current_type)
+        current_mode = current.get("stock_mode", "limited")
+        next_mode = payload.get("stock_mode", current_mode)
+        has_active_holds = db.reservations.count_documents({"status": "active", "items.product_id": product_id}) > 0
+        if (reserved_count or has_active_holds) and (next_type != current_type or next_mode != current_mode):
+            return jsonify({"error": "No puedes cambiar el tipo de publicación o inventario mientras haya apartados activos. Espera a que se confirmen, cancelen o venzan."}), 409
+
+        if next_type == "exclusive":
+            requested_limit = payload.pop("exclusive_limit", None)
+            current_limit = int(current.get("exclusive_limit", current.get("stock", 0)))
+            if requested_limit is None:
+                requested_limit = current_limit if current_type == "exclusive" else int(current.get("stock", 0))
+            sold = max(current_limit - int(current.get("stock", 0)), 0) if current_type == "exclusive" else 0
+            if int(requested_limit) < sold + reserved_count:
+                return jsonify({"error": f"El cupo no puede ser menor que las {sold} unidades compradas y {reserved_count} apartadas."}), 409
+            payload["product_type"] = "exclusive"
+            payload["stock_mode"] = "limited"
+            payload["exclusive_limit"] = int(requested_limit)
+            payload["stock"] = int(requested_limit) - sold
+        elif next_type == "regular":
+            payload.pop("exclusive_limit", None)
+            payload["product_type"] = "regular"
+            if next_mode == "infinite":
+                payload["stock_mode"] = "infinite"
+                payload["stock"] = 0
+            elif "stock" in payload and payload["stock"] < 1:
+                return jsonify({"error": "Las existencias deben ser mayores que cero."}), 400
+            elif "stock" in payload and payload["stock"] < reserved_count:
+                return jsonify({"error": f"Las existencias no pueden ser menores a las {reserved_count} unidades que siguen apartadas."}), 409
+        update_document = {"$set": payload}
+        if next_type == "regular":
+            update_document["$unset"] = {"exclusive_limit": ""}
+        result = db.products.update_one({"_id": product_oid}, update_document)
         if not result.matched_count:
             return jsonify({"error": "No encontramos ese producto."}), 404
         return jsonify({"ok": True})
@@ -684,7 +1187,14 @@ def api_admin_delete_product(product_id):
     if not ObjectId.is_valid(product_id):
         return jsonify({"error": "ID de producto no válido."}), 400
     try:
-        result = get_db().products.update_one({"_id": ObjectId(product_id)}, {"$set": {"active": False, "updated_at": utcnow()}})
+        db = get_db()
+        expire_due_reservations(db)
+        product = db.products.find_one({"_id": ObjectId(product_id)})
+        if not product:
+            return jsonify({"error": "No encontramos ese producto."}), 404
+        if int(product.get("reserved", 0)) > 0 or db.reservations.count_documents({"status": "active", "items.product_id": product_id}) > 0:
+            return jsonify({"error": "No puedes quitar una prenda mientras tenga apartados activos. Cancélalos o espera a que venzan."}), 409
+        result = db.products.update_one({"_id": ObjectId(product_id)}, {"$set": {"active": False, "updated_at": utcnow()}})
         if not result.matched_count:
             return jsonify({"error": "No encontramos ese producto."}), 404
         return jsonify({"ok": True})

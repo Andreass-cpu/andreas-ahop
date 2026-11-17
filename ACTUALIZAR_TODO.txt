@@ -1,17 +1,43 @@
-VESTA — PAQUETE COMPLETO CORREGIDO
+VESTA — ACTUALIZACIÓN COMPLETA
 
-Este ZIP contiene el proyecto completo: app.py, templates/, static/, requirements.txt, render.yaml y documentación.
+ESTRUCTURA Y FUNCIONAMIENTO
+- La tienda tiene dos secciones: Ropa normal y Ediciones exclusivas.
+- Ropa normal: compra directa con bolsa. El administrador puede elegir inventario limitado o ilimitado.
+- Ediciones exclusivas: el administrador define un cupo máximo de compradores. Cada visitante puede apartar una unidad de cada exclusiva.
+- El apartado dura 5 minutos. Atlas guarda reservation_id, artículos, cantidad, estado, created_at y expires_at.
+- Al reservar se incrementa reserved con una condición atómica de disponibilidad. Al confirmar se descuenta stock y se crea el pedido; al cancelar o vencer se libera reserved.
+- Los pedidos y productos también se guardan en MongoDB Atlas.
 
-PARA ACTUALIZAR GITHUB Y RENDER
-1. Descarga y extrae el ZIP en tu computadora.
-2. Abre la carpeta vesta-fashion-python que contiene app.py en la raíz, templates/ y static/.
-3. Reemplaza los archivos de tu repositorio con el contenido de esa carpeta. Mantén la estructura: app.py, templates/admin.html, templates/customer_account.html, static/, etc. No metas todo dentro de una carpeta adicional.
-4. NO subas tu archivo .env ni contraseñas, ni reemplaces variables privadas de Render. El ZIP no incluye un .env con secretos.
-5. Haz commit y push a la rama conectada a Render (normalmente main). En Render verifica el commit desplegado y que el servicio quede Live.
-6. Abre /admin de nuevo. En templates/admin.html debe aparecer o.get('items', []) en vez de o.items.
+SUBIR LOS ARCHIVOS
+1. Extrae el ZIP.
+2. Abre la carpeta vesta-fashion-python: ahí están app.py, templates/, static/, requirements.txt y render.yaml.
+3. Reemplaza el contenido de tu repositorio con esos archivos, respetando exactamente las carpetas.
+4. No subas .env ni sobrescribas MONGODB_URI o SECRET_KEY con valores de ejemplo.
+5. Haz commit/push a la rama que despliega Render y espera el estado Live.
 
-CORRECCIÓN PRINCIPAL
-La plantilla del panel de administración trataba o.items como si fuera la lista de productos del pedido. En diccionarios Python, .items también es un método, por eso Jinja daba TypeError al calcular su longitud. Ahora se obtiene la lista con o.get('items', []) y se usan valores seguros para datos opcionales. También se hicieron más robustas las lecturas de artículos del historial de cliente.
+VARIABLES DE RENDER
+En Render > andreas-ahop > Environment configura:
+  ADMIN_USERNAME = vesta
+  ADMIN_PASSWORD = 4
+  MONGO_DB_NAME = vesta_fashion
+  MONGODB_URI = (conserva la URI real de tu clúster Atlas)
+  SECRET_KEY = (conserva la clave privada ya generada)
+Las variables que ya existen en Render tienen prioridad sobre los valores por defecto del código. Guarda los cambios y vuelve a desplegar.
 
-NOTA DE SEGURIDAD
-Configura ADMIN_PASSWORD y SECRET_KEY como variables privadas en Render. No uses una contraseña simple para producción.
+PRUEBA DE EXCLUSIVAS
+1. Inicia sesión en /admin con usuario vesta y contraseña 4.
+2. Pulsa Nuevo producto y elige “Edición exclusiva · reservar 5 minutos”.
+3. Introduce Cupo máximo de compradores = 1 y guarda.
+4. Abre la tienda en dos navegadores distintos; ambos deben ver la edición exclusiva.
+5. Intenta apartarla desde ambos: solo una sesión debe obtener el cupo.
+6. Cancela el apartado y comprueba que el otro visitante pueda intentarlo de nuevo (la disponibilidad se actualiza en la tienda).
+7. Repite y espera 5 minutos: el cupo debe liberarse. Repite y confirma: debe crearse un pedido y desaparecer la reserva activa.
+
+NOTAS
+- Las operaciones de reserva y confirmación usan transacciones de MongoDB Atlas; el clúster debe admitir transacciones.
+- La contraseña 4 es muy débil. Úsala solo para la prueba solicitada y cámbiala antes de operar públicamente.
+- No compartas credenciales ni datos de compradores.
+
+
+CATALOGO DE EJEMPLO VESTA
+La version actual agrega cuatro prendas originales de muestra a Ediciones exclusivas: Camisa Heritage Verde, Hoodie Street Noir, Chaqueta Biker Eclipse y Blazer Atelier Noire. Sus cupos iniciales son 3, 2, 1 y 2. No se anuncian como prendas oficiales de marcas de terceros. Puedes editar o quitar estas muestras desde /admin.

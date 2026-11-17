@@ -15,3 +15,38 @@
 .admin-login-extra{font-size:10px;color:var(--muted);line-height:1.7;margin:18px 0 0}.admin-login-extra a{color:var(--ink);text-decoration:underline;font-weight:700}
 .account-switch{font-size:11px;color:var(--muted);margin:20px 0 0}.account-switch a{color:var(--ink);text-decoration:underline;font-weight:700}
 @media(max-width:390px){.topbar{gap:10px;padding:0 12px}.brand{font-size:23px}.header-actions{gap:8px}.account-link{display:none}.admin-access-button{font-size:8px;padding:6px 7px}.icon-button svg,.bag-button svg{width:18px;height:18px}}
+
+
+/* Apartados temporales y prendas de edición limitada */
+.reservation-banner,.reservation-checkout-notice{display:flex;align-items:center;justify-content:space-between;gap:16px;margin:0 auto;padding:14px 5%;background:#25271f;color:#fff;flex-wrap:wrap}
+.reservation-banner[hidden],.reservation-checkout-notice[hidden]{display:none}
+.reservation-banner>div,.reservation-checkout-notice>div{display:flex;flex-direction:column;gap:4px;min-width:160px;flex:1}
+.reservation-banner>div strong,.reservation-checkout-notice>div strong{font-size:12px;letter-spacing:.03em}
+.reservation-banner>div span,.reservation-checkout-notice>div p{font-size:10px;color:#d6d6cb;margin:0}
+.reservation-timer{font-variant-numeric:tabular-nums;font-size:21px;letter-spacing:.08em;color:#e5d7ad;white-space:nowrap}
+.reservation-expiring .reservation-timer{color:#ffb6a8}
+.reservation-cancel{border:1px solid rgba(255,255,255,.45);padding:10px 13px;background:transparent;color:inherit;font-size:9px;cursor:pointer}
+.reservation-cancel:hover{background:rgba(255,255,255,.1)}
+.product-card .reserve-button{width:100%;min-height:38px;margin-top:7px;border:1px solid #777b62;background:transparent;color:#454938;font-size:9px;letter-spacing:.06em;text-transform:uppercase;cursor:pointer;transition:background .2s,color .2s}
+.product-card .reserve-button:hover{background:#777b62;color:white}
+.product-card .reserve-button:disabled{opacity:.45;cursor:not-allowed}
+.product-tag.exclusive-tag{background:#3c392e;color:#f4e8c9}
+.stock-badge{max-width:calc(100% - 18px)}
+.reserved-lock-note{display:block;color:#68704f;font-size:9px;margin-top:auto;padding-top:8px}
+.stock-limited{background:#f1e5d2;color:#785d34}
+.stock-infinite{background:#e3eadc;color:#526549}
+#stockFieldGroup small{font-size:9px;color:var(--muted);font-weight:400;line-height:1.5}
+#stockFieldGroup[hidden]{display:none}
+.reservation-checkout-notice{margin:0 0 24px;padding:17px 20px;background:#25271f}
+@media(max-width:720px){.reservation-banner,.reservation-checkout-notice{padding:13px 16px;gap:10px}.reservation-banner .button{min-height:38px;font-size:8px;padding:0 10px}.reservation-timer{font-size:18px}.reservation-banner>div,.reservation-checkout-notice>div{flex-basis:100%}}
+
+/* Separate everyday clothing from reservation-only exclusive drops. */
+.exclusive-collection{background:#eeece4;margin-top:0;padding-top:78px;padding-bottom:88px}
+.exclusive-collection .section-heading{margin-bottom:24px}
+.exclusive-collection .section-heading>p{max-width:390px}
+.exclusive-explainer{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin:0 0 28px;padding:13px 16px;background:#282a22;color:#fff}
+.exclusive-explainer strong{font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:#e7d8ae}
+.exclusive-explainer span{font-size:10px;color:#e1e0d7}
+.exclusive-cap-note{margin:0 0 8px;font-size:9px;color:#77796e;line-height:1.5}
+.product-editor .field[hidden]{display:none}
+@media(max-width:720px){.exclusive-collection{padding:62px 16px}.exclusive-explainer{align-items:flex-start;flex-direction:column;gap:6px}}

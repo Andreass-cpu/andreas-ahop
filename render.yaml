@@ -1,6 +1,6 @@
 services:
   - type: web
-    name: vesta-fashion-python
+    name: andreas-ahop
     runtime: python
     buildCommand: pip install -r requirements.txt
     startCommand: gunicorn app:app --workers 2 --threads 4 --timeout 120
@@ -13,9 +13,9 @@ services:
       - key: SECRET_KEY
         generateValue: true
       - key: ADMIN_USERNAME
-        value: andreas
+        value: vesta
       - key: ADMIN_PASSWORD
-        sync: false
+        value: "4"
       - key: STORE_NAME
         value: VESTA
       - key: CURRENCY
