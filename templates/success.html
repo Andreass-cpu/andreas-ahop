@@ -1,6 +1,24 @@
 {% extends 'base.html' %}
-{% block title %}Pedido recibido — {{ store_name }}{% endblock %}
+{% block title %}Comprobante de pedido — {{ store_name }}{% endblock %}
+{% block head %}<link rel="stylesheet" href="{{ url_for('static', filename='qr.css') }}">{% endblock %}
 {% block content %}
-<header class="topbar"><a class="brand" href="{{ url_for('index') }}">{{ store_name }}<span>.</span></a><a class="back-link" href="{{ url_for('index') }}">Volver a la tienda ↗</a></header>
-<main class="success-page"><div class="success-icon">{% if order %}✓{% else %}!{% endif %}</div><span class="eyebrow">{% if order %}TODO LISTO{% else %}NO PUDIMOS CONFIRMAR{% endif %}</span><h1>{% if order %}Gracias por elegir <em>{{ store_name }}.</em>{% else %}No pudimos verificar tu pago.{% endif %}</h1>{% if order %}<p>{% if paid %}Tu pago fue confirmado.{% else %}Recibimos tu pedido y nos pondremos en contacto para coordinar la entrega y el pago.{% endif %}</p><div class="order-number-card"><span>NÚMERO DE PEDIDO</span><strong>{{ order.number }}</strong></div>{% else %}<p>Revisa el estado de tu pago antes de volver a intentarlo. Si ya se realizó un cargo, contacta a la tienda.</p>{% endif %}<a class="button button-dark" href="{{ url_for('index') }}">Volver a la tienda <span>↗</span></a></main>
+<header class="topbar"><a class="brand qr-page-brand" href="{{ url_for('index') }}" aria-label="VESTA — volver al inicio"><img src="{{ url_for('static', filename='images/vesta-logo.svg') }}" alt="VESTA" class="vesta-logo-image"></a><a class="back-link" href="{{ url_for('index') }}">Volver a la tienda ↗</a></header>
+<main class="success-page">
+  <div class="success-icon">{% if order %}✓{% else %}!{% endif %}</div>
+  <span class="eyebrow">{% if order %}COMPROBANTE VESTA{% else %}NO PUDIMOS CONFIRMAR{% endif %}</span>
+  <h1>{% if order %}Gracias por elegir <em>{{ store_name }}.</em>{% else %}No pudimos verificar tu pago.{% endif %}</h1>
+  {% if order %}
+    <p>{% if paid %}Tu pago fue confirmado.{% else %}Recibimos tu pedido. Puedes consultar su estado desde el comprobante público.{% endif %}</p>
+    <div class="order-number-card"><span>NÚMERO DE PEDIDO</span><strong>{{ order.get('number', 'VESTA') }}</strong></div>
+    {% if order.get('qr_url') %}
+      <section class="qr-panel">
+        <a class="qr-brand-badge" href="{{ url_for('index') }}" aria-label="VESTA, volver a la tienda"><img src="{{ url_for('static', filename='images/vesta-logo.svg') }}" alt="VESTA" class="vesta-logo-image"></a>
+        <div class="qr-panel-copy"><span class="qr-kicker">COMPROBANTE DIGITAL</span><h2>Tu pedido VESTA</h2><p>Escanea para consultar el estado de tu pedido. Tus datos personales no aparecen en esta ficha.</p><a class="button button-dark" href="{{ order.get('public_url') }}" target="_blank" rel="noopener">Abrir comprobante ↗</a></div>
+        <img class="qr-image" src="{{ order.get('qr_url') }}" alt="Código QR del pedido {{ order.get('number') }}"></section>
+    {% endif %}
+  {% else %}
+    <p>Revisa el estado de tu pago antes de volver a intentarlo. Si ya se realizó un cargo, contacta a la tienda.</p>
+  {% endif %}
+  <a class="button button-dark" href="{{ url_for('index') }}">Volver a la tienda <span>↗</span></a>
+</main>
 {% endblock %}

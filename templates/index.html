@@ -6,6 +6,10 @@
   <div class="product-image-wrap">
     <img class="product-image" src="{{ p.image }}" alt="{{ p.name }}" loading="lazy" onerror="this.onerror=null;this.src='{{ url_for('static', filename='images/product-placeholder.svg') }}'">
     <button class="favorite-button" aria-label="Guardar en favoritos" data-favorite="{{ p.id }}">♡</button>
+    <a class="product-qr-button" href="{{ url_for('public_product_ficha', product_id=p.id) }}" aria-label="Abrir QR de {{ p.name }}" title="Abrir ficha QR">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 3h7v7H3zM5 5v3h3V5zM14 3h7v7h-7zM16 5v3h3V5zM3 14h7v7H3zM5 16v3h3v-3zM14 14h3v3h-3zM19 14h2v2h-2zM14 19h2v2h-2zM18 18h3v3h-3z"/></svg>
+      <span>QR</span>
+    </a>
     {% if exclusive %}<span class="product-tag exclusive-tag">EDICIÓN EXCLUSIVA</span>{% else %}<span class="product-tag">ROPA NORMAL</span>{% endif %}
     <span class="stock-badge {% if p.stock_mode != 'infinite' and p.available_stock <= 0 %}out{% endif %}">
       {% if exclusive %}{% if p.available_stock <= 0 %}Cupo completo{% else %}{{ p.available_stock }} cupos disponibles{% endif %}
@@ -41,7 +45,7 @@
   </div>
 </header>
 {% with messages = get_flashed_messages(with_categories=true) %}{% if messages %}<div class="flash-wrap">{% for category, message in messages %}<div class="flash {{ category }}">{{ message }}</div>{% endfor %}</div>{% endif %}{% endwith %}
-<div id="reservationBanner" class="reservation-banner" hidden><div><strong>Tu apartado está activo</strong><span id="reservationBannerText">Tienes prendas exclusivas apartadas durante 5 minutos.</span></div><strong id="reservationBannerTimer" class="reservation-timer">05:00</strong><a class="button button-dark" href="{{ url_for('checkout') }}">Confirmar apartado</a><button type="button" id="cancelReservationBanner" class="reservation-cancel">Cancelar</button></div>
+<div id="reservationBanner" class="reservation-banner" hidden><div><strong>Tu apartado está activo</strong><span id="reservationBannerText">Tienes prendas exclusivas apartadas durante 5 minutos.</span></div><strong id="reservationBannerTimer" class="reservation-timer">05:00</strong><a class="button button-dark" href="{{ url_for('checkout') }}">Confirmar apartado</a><a id="reservationQrLink" class="reservation-qr-link" href="#" target="_blank" rel="noopener">Ver ficha y QR</a><button type="button" id="cancelReservationBanner" class="reservation-cancel">Cancelar</button></div>
 {% if db_error %}<div class="database-warning"><strong>Catálogo listo para probar.</strong> {{ db_error }} Revisa las variables de conexión de Atlas/Render.</div>{% endif %}
 <main>
   <section class="hero">

@@ -1,0 +1,36 @@
+{% extends 'base.html' %}
+{% block title %}Ficha de {{ product.name }} — {{ store_name }}{% endblock %}
+{% block head %}<link rel="stylesheet" href="{{ url_for('static', filename='qr.css') }}">{% endblock %}
+{% block content %}
+<header class="topbar"><a class="brand qr-page-brand" href="{{ url_for('index') }}" aria-label="VESTA — volver al inicio"><img src="{{ url_for('static', filename='images/vesta-logo.svg') }}" alt="VESTA" class="vesta-logo-image"></a><a class="back-link" href="{{ url_for('index') }}">Volver a la tienda ↗</a></header>
+<main class="public-record-page">
+  <span class="eyebrow">FICHA PÚBLICA VESTA</span>
+  <section class="public-record-card">
+    <img class="public-record-product-image" src="{{ product.image or url_for('static', filename='images/product-placeholder.svg') }}" alt="{{ product.name }}" onerror="this.onerror=null;this.src='{{ url_for('static', filename='images/product-placeholder.svg') }}'">
+    <div class="public-record-details">
+      <span class="product-category">{{ product.category }}</span>
+      <h1>{{ product.name }}</h1>
+      <p>{{ product.description }}</p>
+      <strong class="public-record-price">${{ '%.2f'|format(product.price) }} MXN</strong>
+      <p><b>Tipo:</b> {{ 'Edición exclusiva' if product.exclusive else 'Ropa normal' }}</p>
+      {% if not product.active %}
+        <span class="public-status status-unavailable">Producto no disponible</span>
+      {% elif product.stock_mode == 'infinite' %}
+        <span class="public-status status-available">Disponibilidad ilimitada</span>
+      {% elif product.available_stock > 0 %}
+        <span class="public-status status-available">{{ product.available_stock }} {{ 'cupos disponibles' if product.exclusive else 'unidades disponibles' }}</span>
+      {% else %}
+        <span class="public-status status-unavailable">{{ 'Cupo agotado' if product.exclusive else 'Agotado' }}</span>
+      {% endif %}
+      {% if product.exclusive %}<p class="record-note">Las ediciones exclusivas se apartan durante 5 minutos. La disponibilidad se valida en MongoDB Atlas.</p>{% endif %}
+      <a class="button button-dark" href="{{ url_for('index') }}#{{ 'ediciones-exclusivas' if product.exclusive else 'ropa-normal' }}">Volver al catálogo ↗</a>
+    </div>
+  </section>
+  <section class="qr-panel">
+    <a class="qr-brand-badge" href="{{ url_for('index') }}" aria-label="VESTA, volver a la tienda"><img src="{{ url_for('static', filename='images/vesta-logo.svg') }}" alt="VESTA" class="vesta-logo-image"></a>
+    <div class="qr-panel-copy"><span class="qr-kicker">FICHA DEL ARTÍCULO</span><h2>Tu pieza VESTA</h2><p>Escanea para abrir esta ficha y consultar la disponibilidad actual del artículo.</p><a class="text-link" href="{{ product_url }}">Abrir ficha ↗</a></div>
+    <img class="qr-image" src="{{ qr_url }}" alt="Código QR de {{ product.name }}">
+  </section>
+  {% if demo_mode %}<p class="qr-demo-note">Vista de demostración: conecta MongoDB Atlas para consultar y guardar el inventario real.</p>{% endif %}
+</main>
+{% endblock %}

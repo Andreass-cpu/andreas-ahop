@@ -51,6 +51,8 @@
     bannerText.textContent = `${units} unidad(es) apartada(s). Confirma tu compra antes de que termine el tiempo.`;
     const remaining = new Date(activeReservation.expires_at).getTime() - Date.now();
     bannerTimer.textContent = fmt(remaining);
+    const qrLink = document.getElementById('reservationQrLink');
+    if (qrLink && activeReservation.public_url) qrLink.href = activeReservation.public_url;
     banner.classList.toggle('reservation-expiring', remaining <= 60000);
     if (remaining <= 0 && !expirationRefreshPending) {
       expirationRefreshPending = true;

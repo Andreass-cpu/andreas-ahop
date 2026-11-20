@@ -18,6 +18,8 @@ services:
         value: "4"
       - key: STORE_NAME
         value: VESTA
+      - key: APP_BASE_URL
+        value: https://andreas-ahop.onrender.com
       - key: CURRENCY
         value: mxn
       - key: COOKIE_SECURE

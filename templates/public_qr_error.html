@@ -1,0 +1,13 @@
+{% extends 'base.html' %}
+{% block title %}{{ title }} — {{ store_name }}{% endblock %}
+{% block head %}<link rel="stylesheet" href="{{ url_for('static', filename='qr.css') }}">{% endblock %}
+{% block content %}
+<header class="topbar"><a class="brand qr-page-brand" href="{{ url_for('index') }}" aria-label="VESTA — volver al inicio"><img src="{{ url_for('static', filename='images/vesta-logo.svg') }}" alt="VESTA" class="vesta-logo-image"></a><a class="back-link" href="{{ url_for('index') }}">Volver a la tienda ↗</a></header>
+<main class="public-record-page qr-error-page">
+  <section class="qr-panel qr-error-card">
+    <a class="qr-brand-badge" href="{{ url_for('index') }}" aria-label="VESTA, volver a la tienda"><img src="{{ url_for('static', filename='images/vesta-logo.svg') }}" alt="VESTA" class="vesta-logo-image"></a>
+    <div class="qr-panel-copy"><span class="qr-kicker">VESTA · FICHA DIGITAL</span><h1>{{ title }}</h1><p>{{ message }}</p><a class="button button-dark" href="{{ url_for('index') }}">Volver a VESTA</a></div>
+    <div class="qr-error-symbol" aria-hidden="true">!</div>
+  </section>
+</main>
+{% endblock %}

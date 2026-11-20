@@ -1,5 +1,6 @@
 import hashlib
 import hmac
+import io
 import os
 import re
 import uuid
@@ -8,9 +9,10 @@ from functools import wraps
 
 from bson import ObjectId
 from dotenv import load_dotenv
-from flask import Flask, abort, flash, jsonify, redirect, render_template, request, session, url_for
+from flask import Flask, abort, flash, jsonify, redirect, render_template, request, send_file, session, url_for
 from pymongo import MongoClient, ReturnDocument
 from pymongo.errors import DuplicateKeyError, PyMongoError
+import qrcode
 from werkzeug.middleware.proxy_fix import ProxyFix
 from werkzeug.security import check_password_hash, generate_password_hash
 
@@ -36,6 +38,7 @@ STRIPE_SECRET_KEY = os.getenv("STRIPE_SECRET_KEY", "").strip()
 STRIPE_WEBHOOK_SECRET = os.getenv("STRIPE_WEBHOOK_SECRET", "").strip()
 STORE_NAME = os.getenv("STORE_NAME", "VESTA")
 CURRENCY = os.getenv("CURRENCY", "mxn").lower()
+APP_BASE_URL = os.getenv("APP_BASE_URL", "").strip().rstrip("/")
 
 mongo_client = MongoClient(MONGODB_URI, serverSelectionTimeoutMS=5000, tz_aware=True) if MONGODB_URI else None
 RESERVATION_MINUTES = 5
@@ -373,7 +376,33 @@ def release_stock(db, items):
             app.logger.exception("No se pudo devolver inventario para el pedido")
 
 
+def public_url_for(endpoint, **values):
+    """Build a canonical public URL, preferring APP_BASE_URL when configured."""
+    path = url_for(endpoint, **values)
+    base = APP_BASE_URL or request.url_root.rstrip("/")
+    return f"{base}{path}"
+
+
+def qr_png_bytes(target_url):
+    """Create a real PNG QR code that points to a public VESTA page."""
+    code = qrcode.QRCode(
+        version=None,
+        error_correction=qrcode.constants.ERROR_CORRECT_M,
+        box_size=8,
+        border=3,
+    )
+    code.add_data(target_url)
+    code.make(fit=True)
+    image = code.make_image(fill_color="#171717", back_color="white")
+    output = io.BytesIO()
+    image.save(output, format="PNG")
+    output.seek(0)
+    return output
+
+
 def ensure_reservation_indexes(db):
+    # Older VESTA builds used "active" for the same temporal reservation state.
+    db.reservations.update_many({"status": "active"}, {"$set": {"status": "temporal"}})
     db.reservations.create_index("reservation_id", unique=True)
     db.reservations.create_index([("status", 1), ("expires_at", 1)])
 
@@ -390,16 +419,20 @@ def _release_reservation_items(db, reservation, mongo_session):
 
 
 def expire_reservation(db, reservation_id):
-    """Release an expired hold exactly once, inside an Atlas transaction."""
+    """Release an expired hold once and retain its terminal state for QR lookup."""
     if not reservation_id:
         return False
     now = utcnow()
     def operation(mongo_session):
-        reservation = db.reservations.find_one({"reservation_id": reservation_id, "status": "active"}, session=mongo_session)
+        reservation = db.reservations.find_one({"reservation_id": reservation_id, "status": "temporal"}, session=mongo_session)
         if not reservation or reservation.get("expires_at") > now:
             return False
         _release_reservation_items(db, reservation, mongo_session)
-        db.reservations.delete_one({"_id": reservation["_id"], "status": "active"}, session=mongo_session)
+        db.reservations.update_one(
+            {"_id": reservation["_id"], "status": "temporal"},
+            {"$set": {"status": "vencida", "expired_at": now, "updated_at": now}},
+            session=mongo_session,
+        )
         return True
     with db.client.start_session() as mongo_session:
         return mongo_session.with_transaction(operation)
@@ -410,7 +443,7 @@ def expire_due_reservations(db, limit=100):
     now = utcnow()
     ensure_reservation_indexes(db)
     due_ids = [row["reservation_id"] for row in db.reservations.find(
-        {"status": "active", "expires_at": {"$lte": now}}, {"reservation_id": 1}
+        {"status": "temporal", "expires_at": {"$lte": now}}, {"reservation_id": 1}
     ).limit(limit)]
     for reservation_id in due_ids:
         try:
@@ -420,39 +453,63 @@ def expire_due_reservations(db, limit=100):
 
 
 def reservation_view(db, reservation):
-    product_ids = [ObjectId(item["product_id"]) for item in reservation.get("items", [])]
-    products = {str(doc["_id"]): doc for doc in db.products.find({"_id": {"$in": product_ids}})}
+    product_ids = [ObjectId(item["product_id"]) for item in reservation.get("items", []) if ObjectId.is_valid(item.get("product_id", ""))]
+    products = {str(doc["_id"]): doc for doc in db.products.find({"_id": {"$in": product_ids}})} if product_ids else {}
     items = []
     for item in reservation.get("items", []):
-        product = products.get(item["product_id"])
-        if not product:
-            continue
+        product = products.get(item["product_id"], {})
         items.append({
-            "product_id": item["product_id"], "name": product.get("name", "Producto"),
-            "image": product.get("image", ""), "price": float(product.get("price", 0)),
-            "quantity": int(item["quantity"]), "size": item.get("size", "Única"),
+            "product_id": item["product_id"],
+            "name": product.get("name", item.get("name", "Producto")),
+            "image": product.get("image", item.get("image", "")),
+            "price": float(product.get("price", item.get("price", 0))),
+            "quantity": int(item.get("quantity", 1)), "size": item.get("size", "Única"),
             "color": item.get("color", "Único"), "stock_mode": item.get("stock_mode", "limited"),
         })
-    expires_at = reservation["expires_at"]
-    if expires_at.tzinfo is None:
+    expires_at = reservation.get("expires_at")
+    if expires_at and expires_at.tzinfo is None:
         expires_at = expires_at.replace(tzinfo=timezone.utc)
-    return {"active": True, "reservation_id": reservation["reservation_id"], "expires_at": expires_at.isoformat(), "items": items}
+    reservation_id = reservation["reservation_id"]
+    return {
+        "active": reservation.get("status") == "temporal",
+        "status": reservation.get("status", "temporal"),
+        "reservation_id": reservation_id,
+        "expires_at": expires_at.isoformat() if expires_at else None,
+        "created_at": reservation.get("created_at").isoformat() if hasattr(reservation.get("created_at"), "isoformat") else "",
+        "order_number": reservation.get("order_number"),
+        "public_url": public_url_for("public_reservation", reservation_id=reservation_id),
+        "items": items,
+    }
 
 
 def create_temporary_reservation(db, product_id, quantity, size, color):
     ensure_reservation_indexes(db)
-    candidate_id = session.get("reservation_id") or uuid.uuid4().hex
-    # Clear this visitor's previous expired reservation before adding a new hold.
-    expire_reservation(db, candidate_id)
+    visitor_id = session.get("visitor_id")
+    if not visitor_id:
+        visitor_id = uuid.uuid4().hex
+        session["visitor_id"] = visitor_id
+    previous_id = session.get("reservation_id")
+    if previous_id:
+        expire_reservation(db, previous_id)
+    existing = db.reservations.find_one({
+        "reservation_id": previous_id,
+        "status": "temporal",
+        "expires_at": {"$gt": utcnow()},
+    }) if previous_id else None
+    candidate_id = previous_id if existing else uuid.uuid4().hex
     now = utcnow()
     expires_at = now + timedelta(minutes=RESERVATION_MINUTES)
 
     def operation(mongo_session):
-        reservation = db.reservations.find_one({"reservation_id": candidate_id, "status": "active"}, session=mongo_session)
+        reservation = db.reservations.find_one({"reservation_id": candidate_id, "status": "temporal"}, session=mongo_session)
         if reservation and reservation.get("expires_at") <= now:
             _release_reservation_items(db, reservation, mongo_session)
-            db.reservations.delete_one({"_id": reservation["_id"]}, session=mongo_session)
-            reservation = None
+            db.reservations.update_one(
+                {"_id": reservation["_id"], "status": "temporal"},
+                {"$set": {"status": "vencida", "expired_at": now, "updated_at": now}},
+                session=mongo_session,
+            )
+            raise ValueError("Tu apartado anterior venció. Vuelve a intentarlo para crear uno nuevo.")
         product_oid = ObjectId(product_id)
         product = db.products.find_one({"_id": product_oid, "active": True}, session=mongo_session)
         if not product:
@@ -479,13 +536,16 @@ def create_temporary_reservation(db, product_id, quantity, size, color):
 
         if reservation is None:
             reservation = {
-                "reservation_id": candidate_id, "items": [], "status": "active",
+                "reservation_id": candidate_id, "visitante_id": visitor_id,
+                "items": [], "status": "temporal",
                 "created_at": now, "expires_at": expires_at,
             }
             db.reservations.insert_one(reservation, session=mongo_session)
             reservation = db.reservations.find_one({"reservation_id": candidate_id}, session=mongo_session)
         reservation.setdefault("items", []).append({
             "product_id": product_id, "quantity": 1, "size": size, "color": color,
+            "name": product.get("name", "Producto"), "image": product.get("image", ""),
+            "price": float(product.get("price", 0)),
             "stock_mode": "limited", "product_type": "exclusive",
         })
         db.reservations.replace_one({"_id": reservation["_id"]}, reservation, session=mongo_session)
@@ -494,27 +554,37 @@ def create_temporary_reservation(db, product_id, quantity, size, color):
     with db.client.start_session() as mongo_session:
         final_expiry = mongo_session.with_transaction(operation)
     session["reservation_id"] = candidate_id
-    return {"reservation_id": candidate_id, "expires_at": final_expiry.isoformat()}
+    return {
+        "reservation_id": candidate_id,
+        "expires_at": final_expiry.isoformat(),
+        "public_url": public_url_for("public_reservation", reservation_id=candidate_id),
+    }
 
 
 def cancel_temporary_reservation(db, reservation_id):
+    ensure_reservation_indexes(db)
     now = utcnow()
     def operation(mongo_session):
-        reservation = db.reservations.find_one({"reservation_id": reservation_id, "status": "active"}, session=mongo_session)
+        reservation = db.reservations.find_one({"reservation_id": reservation_id, "status": "temporal"}, session=mongo_session)
         if not reservation:
             return False
         _release_reservation_items(db, reservation, mongo_session)
-        db.reservations.delete_one({"_id": reservation["_id"]}, session=mongo_session)
+        db.reservations.update_one(
+            {"_id": reservation["_id"], "status": "temporal"},
+            {"$set": {"status": "cancelada", "cancelled_at": now, "updated_at": now}},
+            session=mongo_session,
+        )
         return True
     with db.client.start_session() as mongo_session:
         return mongo_session.with_transaction(operation)
 
 
 def confirm_reservation_and_insert_order(db, reservation_id, order):
+    ensure_reservation_indexes(db)
     def operation(mongo_session):
         now = utcnow()
         reservation = db.reservations.find_one(
-            {"reservation_id": reservation_id, "status": "active", "expires_at": {"$gt": now}},
+            {"reservation_id": reservation_id, "status": "temporal", "expires_at": {"$gt": now}},
             session=mongo_session,
         )
         if not reservation:
@@ -542,7 +612,11 @@ def confirm_reservation_and_insert_order(db, reservation_id, order):
                 stock_items.append({**item, "stock_mode": "limited"})
         order["stock_items"] = stock_items
         db.orders.insert_one(order, session=mongo_session)
-        db.reservations.delete_one({"_id": reservation["_id"]}, session=mongo_session)
+        db.reservations.update_one(
+            {"_id": reservation["_id"], "status": "temporal"},
+            {"$set": {"status": "confirmada", "order_number": order.get("number"), "confirmed_at": now, "updated_at": now}},
+            session=mongo_session,
+        )
         return order["_id"], stock_items
     with db.client.start_session() as mongo_session:
         return mongo_session.with_transaction(operation)
@@ -635,7 +709,7 @@ def api_reservation_current():
         reservation_id = session.get("reservation_id")
         if not reservation_id:
             return jsonify({"active": False})
-        reservation = db.reservations.find_one({"reservation_id": reservation_id, "status": "active", "expires_at": {"$gt": utcnow()}})
+        reservation = db.reservations.find_one({"reservation_id": reservation_id, "status": "temporal", "expires_at": {"$gt": utcnow()}})
         if not reservation:
             session.pop("reservation_id", None)
             return jsonify({"active": False})
@@ -683,6 +757,120 @@ def api_reservation_cancel():
         return jsonify({"error": "No se pudo cancelar el apartado. Inténtalo de nuevo."}), 503
 
 
+@app.get("/ficha/<product_id>")
+def public_product_ficha(product_id):
+    """Public product sheet. Atlas is authoritative; deterministic demo products work offline."""
+    if not ObjectId.is_valid(product_id):
+        abort(404)
+
+    demo_mode = False
+    product = None
+    try:
+        db = get_db()
+        expire_due_reservations(db)
+        product_doc = db.products.find_one({"_id": ObjectId(product_id)})
+        if not product_doc:
+            abort(404)
+        product = json_product(product_doc)
+    except (RuntimeError, PyMongoError):
+        # The home page intentionally offers a demo catalogue without Atlas. Let those
+        # deterministic sample IDs open a demo sheet too, but never invent stored records.
+        product = next((item for item in fallback_products() if item["id"] == product_id), None)
+        if not product:
+            app.logger.exception("No se pudo consultar la ficha pública del producto en Atlas")
+            return render_template(
+                "public_qr_error.html",
+                title="No pudimos abrir esta ficha",
+                message="Este artículo está guardado en MongoDB Atlas. Revisa la conexión de la tienda e inténtalo otra vez.",
+            ), 503
+        demo_mode = True
+
+    product_url = public_url_for("public_product_ficha", product_id=product_id)
+    qr_url = url_for("qr_image", kind="ficha", identifier=product_id)
+    return render_template(
+        "public_product.html", product=product, product_url=product_url,
+        qr_url=qr_url, demo_mode=demo_mode,
+    )
+
+
+@app.get("/reserva/<reservation_id>")
+def public_reservation(reservation_id):
+    """Public reservation receipt. It exposes status and product details, never customer PII."""
+    if not re.fullmatch(r"[a-fA-F0-9]{32}", reservation_id):
+        abort(404)
+    try:
+        db = get_db()
+        ensure_reservation_indexes(db)
+        expire_reservation(db, reservation_id)
+        reservation_doc = db.reservations.find_one({"reservation_id": reservation_id})
+        if not reservation_doc:
+            abort(404)
+        reservation = reservation_view(db, reservation_doc)
+        labels = {"temporal": "Temporal", "confirmada": "Confirmada", "cancelada": "Cancelada", "vencida": "Vencida", "active": "Temporal", "confirmed": "Confirmada", "cancelled": "Cancelada", "expired": "Vencida"}
+        reservation["status_label"] = labels.get(reservation.get("status"), "No disponible")
+        reservation["qr_url"] = url_for("qr_image", kind="reserva", identifier=reservation_id)
+        reservation["public_url"] = public_url_for("public_reservation", reservation_id=reservation_id)
+        return render_template("public_reservation.html", reservation=reservation)
+    except (RuntimeError, PyMongoError):
+        app.logger.exception("No se pudo consultar la ficha pública de la reserva")
+        return render_template(
+            "public_qr_error.html",
+            title="No pudimos consultar tu apartado",
+            message="Conecta MongoDB Atlas para consultar el estado real de la reserva. El QR está bien generado, pero los datos del apartado se guardan en la base de datos.",
+        ), 503
+
+
+@app.get("/pedido/<order_number>")
+def public_order(order_number):
+    """Public, minimal order receipt that can be opened from a QR."""
+    try:
+        order = get_db().orders.find_one({"number": order_number})
+        if not order:
+            abort(404)
+        public_order_data = {
+            "number": order.get("number", order_number),
+            "status": order.get("status", "received"),
+            "payment_status": order.get("payment_status", "unpaid"),
+            "items": order.get("items", []),
+            "total": float(order.get("total", 0)),
+            "created_at": order.get("created_at").isoformat() if hasattr(order.get("created_at"), "isoformat") else "",
+        }
+        status_labels = {"received": "Recibido", "processing": "Preparando", "shipped": "Enviado", "delivered": "Entregado", "cancelled": "Cancelado", "pending_payment": "Pago pendiente"}
+        public_order_data["status_label"] = status_labels.get(public_order_data["status"], public_order_data["status"])
+        public_order_data["url"] = public_url_for("public_order", order_number=order_number)
+        public_order_data["qr_url"] = url_for("qr_image", kind="pedido", identifier=order_number)
+        return render_template("public_order.html", order=public_order_data)
+    except (RuntimeError, PyMongoError):
+        app.logger.exception("No se pudo abrir el comprobante público")
+        return render_template(
+            "public_qr_error.html",
+            title="No pudimos abrir el comprobante",
+            message="El comprobante y su estado se consultan en MongoDB Atlas. Revisa la conexión de la tienda e inténtalo de nuevo.",
+        ), 503
+
+
+@app.get("/qr/<kind>/<identifier>")
+def qr_image(kind, identifier):
+    """Render a QR without a database round-trip; its destination reads current Atlas data."""
+    if kind == "ficha" and ObjectId.is_valid(identifier):
+        target_url = public_url_for("public_product_ficha", product_id=identifier)
+    elif kind == "reserva" and re.fullmatch(r"[a-fA-F0-9]{32}", identifier):
+        target_url = public_url_for("public_reservation", reservation_id=identifier)
+    elif kind == "pedido" and re.fullmatch(r"[A-Za-z0-9-]{4,80}", identifier):
+        target_url = public_url_for("public_order", order_number=identifier)
+    else:
+        abort(404)
+
+    try:
+        return send_file(
+            qr_png_bytes(target_url), mimetype="image/png",
+            download_name="vesta-qr.png", max_age=0,
+        )
+    except Exception:
+        app.logger.exception("No se pudo renderizar la imagen del código QR")
+        abort(500, description="No se pudo generar el código QR. Inténtalo de nuevo.")
+
+
 @app.get("/checkout")
 def checkout():
     if not MONGODB_URI:
@@ -716,7 +904,7 @@ def api_checkout():
         if reserved_checkout:
             db = get_db()
             expire_due_reservations(db)
-            reservation = db.reservations.find_one({"reservation_id": reservation_id, "status": "active", "expires_at": {"$gt": utcnow()}})
+            reservation = db.reservations.find_one({"reservation_id": reservation_id, "status": "temporal", "expires_at": {"$gt": utcnow()}})
             if not reservation:
                 session.pop("reservation_id", None)
                 return jsonify({"error": "Tu apartado venció. Vuelve a reservar la prenda para continuar."}), 409
@@ -844,6 +1032,9 @@ def checkout_success():
             db = get_db()
             db.orders.update_one({"_id": ObjectId(order_id), "status": "pending_payment"}, {"$set": {"status": "received", "payment_status": "paid", "updated_at": utcnow()}})
             order = db.orders.find_one({"_id": ObjectId(order_id)})
+            if order:
+                order["public_url"] = public_url_for("public_order", order_number=order.get("number"))
+                order["qr_url"] = url_for("qr_image", kind="pedido", identifier=order.get("number"))
             return render_template("success.html", order=order, paid=True)
     except Exception:
         app.logger.exception("No se pudo verificar la sesión de pago")
@@ -898,7 +1089,16 @@ def stripe_webhook():
 
 @app.get("/pedido/<order_number>/gracias")
 def order_success(order_number):
-    return render_template("success.html", order={"number": order_number}, paid=False)
+    try:
+        order = get_db().orders.find_one({"number": order_number})
+        if not order:
+            abort(404)
+        order["public_url"] = public_url_for("public_order", order_number=order_number)
+        order["qr_url"] = url_for("qr_image", kind="pedido", identifier=order_number)
+        return render_template("success.html", order=order, paid=order.get("payment_status") == "paid")
+    except (RuntimeError, PyMongoError):
+        app.logger.exception("No se pudo consultar el pedido recién creado")
+        abort(503)
 
 
 def customer_required(fn):
@@ -1143,7 +1343,7 @@ def api_admin_update_product(product_id):
         next_type = payload.get("product_type", current_type)
         current_mode = current.get("stock_mode", "limited")
         next_mode = payload.get("stock_mode", current_mode)
-        has_active_holds = db.reservations.count_documents({"status": "active", "items.product_id": product_id}) > 0
+        has_active_holds = db.reservations.count_documents({"status": "temporal", "items.product_id": product_id}) > 0
         if (reserved_count or has_active_holds) and (next_type != current_type or next_mode != current_mode):
             return jsonify({"error": "No puedes cambiar el tipo de publicación o inventario mientras haya apartados activos. Espera a que se confirmen, cancelen o venzan."}), 409
 
@@ -1192,7 +1392,7 @@ def api_admin_delete_product(product_id):
         product = db.products.find_one({"_id": ObjectId(product_id)})
         if not product:
             return jsonify({"error": "No encontramos ese producto."}), 404
-        if int(product.get("reserved", 0)) > 0 or db.reservations.count_documents({"status": "active", "items.product_id": product_id}) > 0:
+        if int(product.get("reserved", 0)) > 0 or db.reservations.count_documents({"status": "temporal", "items.product_id": product_id}) > 0:
             return jsonify({"error": "No puedes quitar una prenda mientras tenga apartados activos. Cancélalos o espera a que venzan."}), 409
         result = db.products.update_one({"_id": ObjectId(product_id)}, {"$set": {"active": False, "updated_at": utcnow()}})
         if not result.matched_count:

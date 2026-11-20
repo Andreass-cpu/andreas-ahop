@@ -11,7 +11,11 @@ Proyecto de tienda online en **Python (Flask) + MongoDB Atlas**, con catálogo, 
 - Si alguna fotografía remota no carga, aparece una imagen local de respaldo.
 - Carrito persistente en el navegador y formulario de entrega.
 - Pedidos guardados en MongoDB Atlas. El servidor vuelve a calcular precios y valida tallas, colores y existencias; no confía en los precios enviados por el navegador.
-- Apartados temporales de productos durante 5 minutos, con identificador de visitante, contador, consulta, cancelación, caducidad y confirmación al crear el pedido.
+- Apartados temporales de productos durante 5 minutos, con identificador de visitante, contador, consulta, cancelación, caducidad y confirmación al crear el pedido. El historial de reservas conserva los estados temporal/confirmada/cancelada/vencida en Atlas.
+- Código QR real en PNG para la ficha pública de cada producto, el estado público de cada apartado y el comprobante de cada pedido.
+- La imagen PNG del QR se genera sin consultar Atlas; al abrir el enlace escaneado, las fichas de apartados y pedidos consultan MongoDB Atlas para mostrar datos reales. Las fichas de productos de demostración pueden abrirse sin Atlas y se identifican como demostración.
+- Las páginas públicas de QR usan el logotipo gráfico VESTA en SVG, colocado en la esquina superior de la tarjeta del código.
+- Los QR abren páginas de VESTA publicadas en Render; las fichas se consultan de nuevo en Atlas para mostrar disponibilidad y estado actualizados. El comprobante público no expone domicilio, teléfono ni correo.
 - Ropa normal: compra directa desde la bolsa, con inventario limitado o ilimitado configurable. Ediciones exclusivas: apartado temporal con un cupo máximo de compradores/unidades definido por el administrador.
 - Las ediciones exclusivas usan `exclusive_limit`, `stock` y `reserved`; Atlas valida la disponibilidad de forma atómica para evitar que dos visitantes aparten el mismo último cupo. Cada visitante puede apartar una unidad de cada exclusiva.
 - Panel privado `/admin` para crear, editar, quitar temporalmente y reactivar productos, revisar compras completas (artículos, cantidades, datos de entrega y pago) y cambiar el estado de los pedidos.
@@ -73,6 +77,7 @@ ADMIN_PASSWORD=4
 STORE_NAME=VESTA
 CURRENCY=mxn
 COOKIE_SECURE=false
+APP_BASE_URL=https://andreas-ahop.onrender.com
 ```
 
 Después ejecuta:
@@ -106,7 +111,7 @@ Sustituye la URL de ejemplo por la URL de tu repositorio. Antes de hacer `git ad
 
 1. Entra a [Render](https://render.com/) y elige **New → Blueprint** (o crea un Web Service conectado al repositorio).
 2. Selecciona tu repositorio de GitHub. Render detectará `render.yaml`.
-3. En **Environment**, define `MONGODB_URI` con la URI de Atlas, `ADMIN_USERNAME` como `vesta`, y `ADMIN_PASSWORD` como `4` para usar las credenciales iniciales solicitadas. La contraseña `4` es extremadamente débil para una tienda pública: cualquier persona podría intentar entrar y ver nombres, teléfonos, direcciones y pedidos. Cámbiala por una contraseña larga antes de aceptar compras reales. `SECRET_KEY` se genera con Render. No pongas las claves en archivos del repositorio.
+3. En **Environment**, define `MONGODB_URI` con la URI de Atlas, `ADMIN_USERNAME` como `vesta`, `ADMIN_PASSWORD` como `4` para usar las credenciales iniciales solicitadas y `APP_BASE_URL` como `https://andreas-ahop.onrender.com` (ajusta el dominio si tu servicio usa otro). La contraseña `4` es extremadamente débil para una tienda pública: cualquier persona podría intentar entrar y ver nombres, teléfonos, direcciones y pedidos. Cámbiala por una contraseña larga antes de aceptar compras reales. `SECRET_KEY` se genera con Render. No pongas las claves en archivos del repositorio.
 4. Revisa que el nombre de la base de datos sea `vesta_fashion`. Pulsa crear/desplegar.
 5. Cuando termine el despliegue, abre el dominio `onrender.com` de tu servicio. Comprueba `/health`; debería responder `{"status":"ok","database":"connected"}`.
 6. Para administrar la tienda, entra en `https://TU-SERVICIO.onrender.com/admin/login` con el usuario configurado (`vesta`) y `ADMIN_PASSWORD`. El usuario y la contraseña configurados en Render tienen prioridad sobre los valores de ejemplo. El panel muestra datos privados de los compradores; protege las credenciales.
@@ -123,13 +128,36 @@ Al crear o editar un producto desde `/admin`, primero elige dónde aparecerá:
 - **Ropa normal:** se muestra en la sección Ropa normal y se compra directamente agregándola a la bolsa. Puede usar existencias limitadas o inventario ilimitado. El servidor valida y descuenta las existencias limitadas al generar el pedido.
 - **Edición exclusiva:** se muestra en una sección aparte. Al crearla, el administrador establece el **cupo máximo de compradores**. Cada visitante puede apartar una unidad de esa edición. El apartado bloquea un cupo durante cinco minutos; no se puede confirmar después de vencer.
 
-Los apartados exclusivos usan el modelo de cantidad descrito en la actividad: `stock` guarda las unidades todavía no vendidas, `reserved` las unidades apartadas y `exclusive_limit` el cupo máximo original. La disponibilidad se calcula como `stock - reserved`. MongoDB Atlas actualiza `reserved` solamente cuando todavía hay cupo disponible, así que dos visitantes distintos no pueden quedarse con la última unidad. El identificador `reservation_id`, la cantidad, el estado y las fechas UTC se guardan en la colección `reservations`.
+Los apartados exclusivos usan el modelo de cantidad descrito en la actividad: `stock` guarda las unidades todavía no vendidas, `reserved` las unidades apartadas y `exclusive_limit` el cupo máximo original. La disponibilidad se calcula como `stock - reserved`. MongoDB Atlas actualiza `reserved` solamente cuando todavía hay cupo disponible, así que dos visitantes distintos no pueden quedarse con la última unidad. El identificador `reservation_id`, `visitante_id`, producto, cantidad, el estado (`temporal`, `confirmada`, `cancelada` o `vencida`) y las fechas UTC se guardan en la colección `reservations`.
 
-El visitante puede consultar su apartado, ver el contador, cancelar o confirmar. Al cancelar o vencer, Atlas libera el cupo una sola vez; al confirmar, se descuenta el stock, se crea el pedido y se elimina la reserva temporal. El contador solo informa: el servidor comprueba la fecha real de vencimiento al confirmar. Las operaciones de reservar, liberar y confirmar usan transacciones de MongoDB Atlas.
+El visitante puede consultar su apartado, ver el contador, cancelar o confirmar. Al cancelar o vencer, Atlas libera el cupo una sola vez y conserva el documento con estado `cancelada` o `vencida`; al confirmar, se descuenta el stock, se crea el pedido y la reserva cambia a `confirmada`. El contador solo informa: el servidor comprueba la fecha real de vencimiento al confirmar. Las operaciones de reservar, liberar y confirmar usan transacciones de MongoDB Atlas.
+
+## 6. Código QR y fichas públicas
+
+- Cada tarjeta de producto tiene un acceso compacto con icono QR en la esquina superior de la foto. Abre `/ficha/ID`, una página pública que vuelve a consultar Atlas y muestra la disponibilidad actual. La propia ficha muestra su QR.
+- Cada apartado tiene una ficha pública `/reserva/FOLIO`. El QR sigue funcionando después de confirmar, cancelar o vencer porque los estados terminales se conservan en la colección `reservations`.
+- Cada compra tiene un comprobante público `/pedido/FOLIO` con su resumen, total y estado actual. El QR del comprobante no incluye datos de entrega, correo ni teléfono del comprador.
+- `/qr/ficha/ID`, `/qr/reserva/FOLIO` y `/qr/pedido/FOLIO` entregan las imágenes PNG QR. Los códigos codifican las URLs públicas, no localhost.
+- Configura `APP_BASE_URL=https://andreas-ahop.onrender.com` en Render. Si cambia el dominio del servicio, actualiza ese valor y vuelve a desplegar.
+
+Las imágenes QR se generan en el servidor con la dependencia `qrcode[pil]`; no dependen de un generador externo.
 
 Para probarlo, crea una edición exclusiva con cupo 1, abre la tienda en dos navegadores (uno normal y otro incógnito) y trata de apartar desde ambos. Solo uno debe conseguir el cupo. Después prueba cancelar, esperar cinco minutos y confirmar una compra.
 
-## 6. Pago con tarjeta (opcional)
+### Pruebas finales del QR y la reserva
+
+1. Usuario A aparta una exclusiva disponible: Atlas guarda el apartado y el contador se muestra.
+2. Usuario B intenta apartar la misma última unidad: VESTA rechaza la operación.
+3. A cancela: el cupo vuelve a estar disponible.
+4. A aparta y deja vencer los cinco minutos: Atlas cambia el estado a `vencida` y libera el cupo.
+5. A confirma antes del vencimiento: el pedido se crea y la reserva queda `confirmada`.
+6. Recargar la tienda conserva el estado porque está guardado en Atlas.
+7. Escanear el QR de la ficha o comprobante abre la dirección pública de Render.
+8. Cambiar el estado y escanear el mismo QR vuelve a mostrar la información actualizada.
+9. Un ID inexistente muestra un error 404 controlado.
+10. Probar desde otro equipo confirma que no se utilizan URLs `localhost`.
+
+## 7. Pago con tarjeta (opcional)
 
 Los pedidos con pago al recibir funcionan sin Stripe. Para activar pagos con tarjeta:
 
@@ -155,6 +183,10 @@ No habilites pagos reales hasta confirmar las URLs, claves y webhooks del entorn
 - `/api/reservations` — crear un apartado temporal (requiere sesión de visitante)
 - `/api/reservations/current` — consultar el apartado y su vencimiento
 - `/api/reservations/cancel` — cancelar y liberar un apartado
+- `/ficha/ID` — ficha pública y QR de un producto
+- `/reserva/FOLIO` — estado público de un apartado y su QR
+- `/pedido/FOLIO` — comprobante público de pedido y su QR
+- `/qr/ficha/ID`, `/qr/reserva/FOLIO`, `/qr/pedido/FOLIO` — imágenes PNG de los códigos QR
 - `/stripe/webhook` — webhook opcional de Stripe
 
 ## Nota antes de vender

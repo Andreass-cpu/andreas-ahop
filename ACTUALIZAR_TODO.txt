@@ -4,9 +4,16 @@ ESTRUCTURA Y FUNCIONAMIENTO
 - La tienda tiene dos secciones: Ropa normal y Ediciones exclusivas.
 - Ropa normal: compra directa con bolsa. El administrador puede elegir inventario limitado o ilimitado.
 - Ediciones exclusivas: el administrador define un cupo máximo de compradores. Cada visitante puede apartar una unidad de cada exclusiva.
-- El apartado dura 5 minutos. Atlas guarda reservation_id, artículos, cantidad, estado, created_at y expires_at.
+- El apartado dura 5 minutos. Atlas guarda reservation_id, visitante_id, producto_id, cantidad, estado (temporal/confirmada/cancelada/vencida), created_at y expires_at.
 - Al reservar se incrementa reserved con una condición atómica de disponibilidad. Al confirmar se descuenta stock y se crea el pedido; al cancelar o vencer se libera reserved.
 - Los pedidos y productos también se guardan en MongoDB Atlas.
+- Cada prenda tiene una ficha pública en /ficha/ID y un QR PNG que abre esa ficha.
+- Cada apartado tiene una ficha pública en /reserva/FOLIO con QR; su estado se conserva en Atlas como temporal/confirmada/cancelada/vencida y se muestra como Temporal/Confirmada/Cancelada/Vencida.
+- Cada pedido tiene un comprobante público en /pedido/FOLIO y un QR que muestra artículos, total y estado, sin publicar datos personales del comprador.
+- Las imágenes QR se generan en el servidor con qrcode[pil]; requirements.txt instala la biblioteca y Pillow.
+- Los QR usan APP_BASE_URL para abrir el dominio publicado de Render, nunca localhost.
+- La imagen PNG del QR se puede generar sin consultar Atlas; al escanearla, los comprobantes de reservas y pedidos consultan Atlas para mostrar el estado real. Las fichas de productos de demostración abren en modo demostración si Atlas aún no está conectado.
+- El logotipo gráfico VESTA (static/images/vesta-logo.svg) aparece en la esquina superior de las tarjetas QR y sustituye el encabezado de texto anterior.
 
 SUBIR LOS ARCHIVOS
 1. Extrae el ZIP.
@@ -22,6 +29,7 @@ En Render > andreas-ahop > Environment configura:
   MONGO_DB_NAME = vesta_fashion
   MONGODB_URI = (conserva la URI real de tu clúster Atlas)
   SECRET_KEY = (conserva la clave privada ya generada)
+  APP_BASE_URL = https://andreas-ahop.onrender.com
 Las variables que ya existen en Render tienen prioridad sobre los valores por defecto del código. Guarda los cambios y vuelve a desplegar.
 
 PRUEBA DE EXCLUSIVAS
@@ -31,7 +39,10 @@ PRUEBA DE EXCLUSIVAS
 4. Abre la tienda en dos navegadores distintos; ambos deben ver la edición exclusiva.
 5. Intenta apartarla desde ambos: solo una sesión debe obtener el cupo.
 6. Cancela el apartado y comprueba que el otro visitante pueda intentarlo de nuevo (la disponibilidad se actualiza en la tienda).
-7. Repite y espera 5 minutos: el cupo debe liberarse. Repite y confirma: debe crearse un pedido y desaparecer la reserva activa.
+7. A reserva y deja terminar los 5 minutos: Atlas debe liberar el cupo y la reserva queda con estado vencida.
+8. A confirma otro apartado: se crea un pedido y la reserva queda con estado confirmada.
+9. Escanea el QR desde un celular, cambia el estado y vuelve a escanear el mismo QR: debe abrir la ficha actualizada en Render.
+10. Prueba un identificador inexistente y abre la aplicación desde otro equipo: debe mostrar un mensaje claro y no depender de localhost.
 
 NOTAS
 - Las operaciones de reserva y confirmación usan transacciones de MongoDB Atlas; el clúster debe admitir transacciones.
