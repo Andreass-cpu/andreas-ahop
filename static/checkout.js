@@ -87,11 +87,14 @@
     submit.disabled = true; submit.innerHTML = '<span class="spinner"></span> Procesando...';
     try {
       const response = await fetch('/api/checkout', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload)});
-      const result = await response.json(); if (!response.ok) throw new Error(result.error || 'No pudimos procesar tu pedido.');
+      const result = await response.json(); if (response.status === 401 && result.login_required && result.login_url) { window.location.assign(result.login_url); return; } if (!response.ok) throw new Error(result.error || 'No pudimos procesar tu pedido.');
       if (!activeReservation) writeCart([]);
       if (result.redirect_url) { window.location.href = result.redirect_url; return; }
       window.location.href = `/pedido/${encodeURIComponent(result.order_number)}/gracias`;
     } catch (error) { errorEl.textContent = error.message || 'Ocurrió un error. Inténtalo de nuevo.'; submit.disabled = false; submit.innerHTML = 'Confirmar pedido <span>↗</span>'; if (activeReservation) refreshReservation(); }
   });
   refreshReservation();
+  window.addEventListener('pageshow', event => {
+    if (event.persisted) refreshReservation();
+  });
 })();

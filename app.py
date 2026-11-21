@@ -3,7 +3,9 @@ import hmac
 import io
 import os
 import re
+import threading
 import uuid
+from urllib.parse import urlsplit
 from datetime import datetime, timedelta, timezone
 from functools import wraps
 
@@ -42,6 +44,13 @@ APP_BASE_URL = os.getenv("APP_BASE_URL", "").strip().rstrip("/")
 
 mongo_client = MongoClient(MONGODB_URI, serverSelectionTimeoutMS=5000, tz_aware=True) if MONGODB_URI else None
 RESERVATION_MINUTES = 5
+
+# Avoid rerunning catalogue migrations, seed lookups and index creation on every
+# homepage request. Each Gunicorn worker performs these once after its first use.
+_seed_products_ready = False
+_seed_products_lock = threading.Lock()
+_reservation_indexes_ready = False
+_reservation_indexes_lock = threading.Lock()
 
 SEED_PRODUCTS = [
     {"name": "Chaqueta urbana", "category": "Mujer", "description": "Chaqueta ligera de corte relajado para elevar cualquier look diario.", "price": 899, "sizes": ["XS", "S", "M", "L"], "colors": ["Negro", "Arena"], "image": "https://images.unsplash.com/photo-1529139574466-a303027c1d8b?auto=format&fit=crop&w=900&q=85", "stock": 14},
@@ -139,7 +148,7 @@ def fallback_products():
     return regular + exclusive
 
 
-def seed_products(db):
+def _seed_products_impl(db):
     # Migrate the previous catalogue model without losing the old distinction:
     # seed/demo pieces are regular; custom limited products from the former admin form
     # become exclusive drops; products with no stock_mode default to regular.
@@ -175,7 +184,11 @@ def seed_products(db):
         sample_id = sample_product_id(product["name"])
         if db.products.find_one({"_id": sample_id}, {"_id": 1}):
             continue
-        db.products.insert_one({**product, "_id": sample_id, "product_type": "regular", "stock_mode": "limited", "reserved": 0, "active": True, "created_at": now, "updated_at": now})
+        try:
+            db.products.insert_one({**product, "_id": sample_id, "product_type": "regular", "stock_mode": "limited", "reserved": 0, "active": True, "created_at": now, "updated_at": now})
+        except DuplicateKeyError:
+            # Another Gunicorn worker inserted the same deterministic sample.
+            pass
 
     # Insertar las exclusivas de muestra una sola vez; nunca reemplazar inventario existente.
     for product in SEED_EXCLUSIVE_PRODUCTS:
@@ -185,17 +198,33 @@ def seed_products(db):
         if db.products.find_one({"_id": sample_id}, {"_id": 1}):
             continue
         limit = int(product["exclusive_limit"])
-        db.products.insert_one({
-            **product,
-            "_id": sample_id,
-            "product_type": "exclusive",
-            "stock_mode": "limited",
-            "stock": limit,
-            "reserved": 0,
-            "active": True,
-            "created_at": now,
-            "updated_at": now,
-        })
+        try:
+            db.products.insert_one({
+                **product,
+                "_id": sample_id,
+                "product_type": "exclusive",
+                "stock_mode": "limited",
+                "stock": limit,
+                "reserved": 0,
+                "active": True,
+                "created_at": now,
+                "updated_at": now,
+            })
+        except DuplicateKeyError:
+            # Another Gunicorn worker inserted the same deterministic sample.
+            pass
+
+
+def seed_products(db):
+    """Run catalogue migrations and sample inserts once per worker process."""
+    global _seed_products_ready
+    if _seed_products_ready:
+        return
+    with _seed_products_lock:
+        if _seed_products_ready:
+            return
+        _seed_products_impl(db)
+        _seed_products_ready = True
 
 
 def json_product(doc):
@@ -401,10 +430,18 @@ def qr_png_bytes(target_url):
 
 
 def ensure_reservation_indexes(db):
-    # Older VESTA builds used "active" for the same temporal reservation state.
-    db.reservations.update_many({"status": "active"}, {"$set": {"status": "temporal"}})
-    db.reservations.create_index("reservation_id", unique=True)
-    db.reservations.create_index([("status", 1), ("expires_at", 1)])
+    """Migrate legacy reservation labels and create indexes once per worker."""
+    global _reservation_indexes_ready
+    if _reservation_indexes_ready:
+        return
+    with _reservation_indexes_lock:
+        if _reservation_indexes_ready:
+            return
+        # Older VESTA builds used "active" for the same temporal reservation state.
+        db.reservations.update_many({"status": "active"}, {"$set": {"status": "temporal"}})
+        db.reservations.create_index("reservation_id", unique=True)
+        db.reservations.create_index([("status", 1), ("expires_at", 1)])
+        _reservation_indexes_ready = True
 
 
 def _release_reservation_items(db, reservation, mongo_session):
@@ -640,6 +677,24 @@ def sanitize_order(order):
     }
 
 
+@app.after_request
+def tune_navigation_cache(response):
+    """Keep public catalogue pages briefly reusable on Back; never cache private receipts/accounts."""
+    if request.method == "GET" and request.endpoint in {"index", "public_product_ficha"}:
+        # Briefly reuse public catalogue pages on Back/Forward. Inventory-changing
+        # routes still validate stock against Atlas, and the home page refreshes it
+        # asynchronously when restored from the browser back-forward cache.
+        response.headers["Cache-Control"] = "private, max-age=15, stale-while-revalidate=30"
+        response.headers["Vary"] = "Cookie"
+    elif request.method == "GET" and request.endpoint in {
+        "checkout", "customer_login", "customer_register", "customer_dashboard",
+        "admin_dashboard", "public_order", "public_reservation", "order_success",
+        "checkout_success",
+    }:
+        response.headers["Cache-Control"] = "private, no-cache, must-revalidate"
+    return response
+
+
 @app.context_processor
 def inject_store_settings():
     return {
@@ -838,6 +893,7 @@ def public_order(order_number):
         status_labels = {"received": "Recibido", "processing": "Preparando", "shipped": "Enviado", "delivered": "Entregado", "cancelled": "Cancelado", "pending_payment": "Pago pendiente"}
         public_order_data["status_label"] = status_labels.get(public_order_data["status"], public_order_data["status"])
         public_order_data["url"] = public_url_for("public_order", order_number=order_number)
+        public_order_data["public_url"] = public_order_data["url"]
         public_order_data["qr_url"] = url_for("qr_image", kind="pedido", identifier=order_number)
         return render_template("public_order.html", order=public_order_data)
     except (RuntimeError, PyMongoError):
@@ -873,6 +929,10 @@ def qr_image(kind, identifier):
 
 @app.get("/checkout")
 def checkout():
+    customer_id = str(session.get("customer_id", ""))
+    if not ObjectId.is_valid(customer_id):
+        flash("Inicia sesión o crea una cuenta para finalizar tu compra.", "error")
+        return redirect(url_for("customer_login", next=url_for("checkout")))
     if not MONGODB_URI:
         flash("Configura MongoDB Atlas en .env antes de realizar pedidos.", "error")
     return render_template("checkout.html")
@@ -880,6 +940,14 @@ def checkout():
 
 @app.post("/api/checkout")
 def api_checkout():
+    # Security check on the server: hiding the checkout button is not enough.
+    customer_id = str(session.get("customer_id", ""))
+    if not ObjectId.is_valid(customer_id):
+        return jsonify({
+            "error": "Inicia sesión o crea una cuenta para comprar en VESTA.",
+            "login_required": True,
+            "login_url": url_for("customer_login", next=url_for("checkout")),
+        }), 401
     data = request.get_json(silent=True) or {}
     customer = data.get("customer") or {}
     payment_method = str(data.get("payment_method", "cod")).lower()
@@ -1094,6 +1162,7 @@ def order_success(order_number):
         if not order:
             abort(404)
         order["public_url"] = public_url_for("public_order", order_number=order_number)
+        order["url"] = order["public_url"]
         order["qr_url"] = url_for("qr_image", kind="pedido", identifier=order_number)
         return render_template("success.html", order=order, paid=order.get("payment_status") == "paid")
     except (RuntimeError, PyMongoError):
@@ -1101,12 +1170,31 @@ def order_success(order_number):
         abort(503)
 
 
+def safe_internal_redirect(target):
+    """Only honor same-site relative redirect targets after login."""
+    if not target:
+        return None
+    target = str(target).strip()
+    parsed = urlsplit(target)
+    if "\\" in target or parsed.scheme or parsed.netloc or not parsed.path.startswith("/") or parsed.path.startswith("//"):
+        return None
+    return str(target)
+
+
+def restore_visitor_reservation(saved_reservation_id, saved_visitor_id):
+    # Logging in should not discard a still-active five-minute hold.
+    if saved_reservation_id:
+        session["reservation_id"] = saved_reservation_id
+    if saved_visitor_id:
+        session["visitor_id"] = saved_visitor_id
+
+
 def customer_required(fn):
     @wraps(fn)
     def wrapper(*args, **kwargs):
         customer_id = str(session.get("customer_id", ""))
         if not ObjectId.is_valid(customer_id):
-            return redirect(url_for("customer_login", next=request.path))
+            return redirect(url_for("customer_login", next=request.full_path.rstrip("?") or request.path))
         return fn(*args, **kwargs)
     return wrapper
 
@@ -1114,7 +1202,8 @@ def customer_required(fn):
 @app.route("/cuenta/crear", methods=["GET", "POST"])
 def customer_register():
     if session.get("customer_id") and ObjectId.is_valid(str(session.get("customer_id"))):
-        return redirect(url_for("customer_dashboard"))
+        next_target = safe_internal_redirect(request.args.get("next"))
+        return redirect(next_target or url_for("customer_dashboard"))
 
     if request.method == "POST":
         name = request.form.get("name", "").strip()[:120]
@@ -1144,12 +1233,16 @@ def customer_register():
                         "created_at": utcnow(),
                     }
                     result = db.users.insert_one(user)
+                    saved_reservation_id = session.get("reservation_id")
+                    saved_visitor_id = session.get("visitor_id")
                     session.clear()
                     session["customer_id"] = str(result.inserted_id)
                     session["customer_name"] = name
                     session["customer_email"] = email
+                    restore_visitor_reservation(saved_reservation_id, saved_visitor_id)
                     flash("Tu cuenta se creó correctamente.", "success")
-                    return redirect(url_for("customer_dashboard"))
+                    next_target = safe_internal_redirect(request.form.get("next") or request.args.get("next"))
+                    return redirect(next_target or url_for("customer_dashboard"))
             except DuplicateKeyError:
                 flash("Ya existe una cuenta con ese correo. Inicia sesión.", "error")
             except Exception:
@@ -1162,7 +1255,8 @@ def customer_register():
 @app.route("/cuenta/login", methods=["GET", "POST"])
 def customer_login():
     if session.get("customer_id") and ObjectId.is_valid(str(session.get("customer_id"))):
-        return redirect(url_for("customer_dashboard"))
+        next_target = safe_internal_redirect(request.args.get("next"))
+        return redirect(next_target or url_for("customer_dashboard"))
 
     if request.method == "POST":
         email = request.form.get("email", "").strip().lower()[:254]
@@ -1170,11 +1264,15 @@ def customer_login():
         try:
             user = get_db().users.find_one({"email": email})
             if user and check_password_hash(user.get("password_hash", ""), password):
+                saved_reservation_id = session.get("reservation_id")
+                saved_visitor_id = session.get("visitor_id")
                 session.clear()
                 session["customer_id"] = str(user["_id"])
                 session["customer_name"] = user.get("name", "Cliente")
                 session["customer_email"] = user.get("email", email)
-                return redirect(url_for("customer_dashboard"))
+                restore_visitor_reservation(saved_reservation_id, saved_visitor_id)
+                next_target = safe_internal_redirect(request.form.get("next") or request.args.get("next"))
+                return redirect(next_target or url_for("customer_dashboard"))
             flash("Correo o contraseña incorrectos.", "error")
         except Exception:
             app.logger.exception("No se pudo iniciar sesión de cliente")

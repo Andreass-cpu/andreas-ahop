@@ -52,3 +52,20 @@ NOTAS
 
 CATALOGO DE EJEMPLO VESTA
 La version actual agrega cuatro prendas originales de muestra a Ediciones exclusivas: Camisa Heritage Verde, Hoodie Street Noir, Chaqueta Biker Eclipse y Blazer Atelier Noire. Sus cupos iniciales son 3, 2, 1 y 2. No se anuncian como prendas oficiales de marcas de terceros. Puedes editar o quitar estas muestras desde /admin.
+
+
+ACTUALIZACIÓN DE COMPRAS, RECIBO QR Y VELOCIDAD (20-NOV-2026)
+- Corregido el comprobante público del pedido: la plantilla recorre order.get('items', []) y evita el choque con el método items() de los diccionarios.
+- Corregido el enlace del comprobante público para abrir /pedido/FOLIO desde la misma página del QR.
+- Las rutas de /checkout y POST /api/checkout requieren una sesión de cliente; un POST directo sin iniciar sesión responde 401 y no crea pedidos.
+- Tras iniciar sesión o crear una cuenta desde checkout, se regresa a /checkout. Se conserva el carrito del navegador y, si existe, el apartado temporal de cinco minutos.
+- Se optimizó la navegación atrás/adelante: el catálogo público usa una caché privada breve y actualiza disponibilidad en segundo plano al restaurarse desde BFCache.
+- La migración/siembra de muestras y los índices de reservas ya no se repiten en cada visita por worker, reduciendo trabajo de Atlas en la navegación.
+
+PRUEBAS A REALIZAR DESPUÉS DEL DEPLOY
+1. Sin sesión, entrar a /checkout: debe redirigir a /cuenta/login?next=/checkout.
+2. Sin sesión, enviar POST directo a /api/checkout: debe responder 401 y no crear pedido.
+3. Iniciar sesión: debe regresar al checkout y conservar el carrito.
+4. Comprar una prenda normal y abrir /pedido/FOLIO; debe mostrar los artículos y el total.
+5. Escanear el QR del recibo: debe abrir el mismo comprobante público.
+6. Probar atrás/adelante en móvil y escritorio; al volver al catálogo, la disponibilidad se actualiza en segundo plano.

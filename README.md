@@ -10,6 +10,7 @@ Proyecto de tienda online en **Python (Flask) + MongoDB Atlas**, con catálogo, 
 - El catálogo de muestra también se ve cuando MongoDB Atlas todavía no está configurado; para registrar pedidos e inventario sí debes conectar Atlas.
 - Si alguna fotografía remota no carga, aparece una imagen local de respaldo.
 - Carrito persistente en el navegador y formulario de entrega.
+- **Inicio de sesión obligatorio para comprar:** `/checkout` redirige a iniciar sesión o crear cuenta; `POST /api/checkout` también bloquea pedidos sin sesión válida. Después del acceso vuelve al checkout y conserva el carrito y un apartado temporal activo.
 - Pedidos guardados en MongoDB Atlas. El servidor vuelve a calcular precios y valida tallas, colores y existencias; no confía en los precios enviados por el navegador.
 - Apartados temporales de productos durante 5 minutos, con identificador de visitante, contador, consulta, cancelación, caducidad y confirmación al crear el pedido. El historial de reservas conserva los estados temporal/confirmada/cancelada/vencida en Atlas.
 - Código QR real en PNG para la ficha pública de cada producto, el estado público de cada apartado y el comprobante de cada pedido.
@@ -24,6 +25,8 @@ Proyecto de tienda online en **Python (Flask) + MongoDB Atlas**, con catálogo, 
 - Pago al recibir habilitado por defecto.
 - Pago con tarjeta opcional mediante Stripe Checkout; necesita configurar las claves de Stripe y un webhook para liberar inventario si la sesión de pago caduca.
 - Endpoint `/health`, configuración para Render y variables secretas fuera del repositorio.
+- Volver atrás/adelante reutiliza brevemente el catálogo público desde caché privada; las existencias se refrescan en segundo plano al volver a la tienda y las operaciones siempre se validan en Atlas.
+- Migración/siembra del catálogo e índices de reservas se ejecutan una vez por worker, no en cada navegación, reduciendo operaciones de base de datos al volver a la página principal.
 
 ## Archivos clave
 
@@ -136,7 +139,7 @@ El visitante puede consultar su apartado, ver el contador, cancelar o confirmar.
 
 - Cada tarjeta de producto tiene un acceso compacto con icono QR en la esquina superior de la foto. Abre `/ficha/ID`, una página pública que vuelve a consultar Atlas y muestra la disponibilidad actual. La propia ficha muestra su QR.
 - Cada apartado tiene una ficha pública `/reserva/FOLIO`. El QR sigue funcionando después de confirmar, cancelar o vencer porque los estados terminales se conservan en la colección `reservations`.
-- Cada compra tiene un comprobante público `/pedido/FOLIO` con su resumen, total y estado actual. El QR del comprobante no incluye datos de entrega, correo ni teléfono del comprador.
+- Cada compra tiene un comprobante público `/pedido/FOLIO` con su resumen, total y estado actual. El QR del comprobante no incluye datos de entrega, correo ni teléfono del comprador. La plantilla accede a la lista con `order.get('items', [])` para evitar el choque de Jinja con el método `dict.items`.
 - `/qr/ficha/ID`, `/qr/reserva/FOLIO` y `/qr/pedido/FOLIO` entregan las imágenes PNG QR. Los códigos codifican las URLs públicas, no localhost.
 - Configura `APP_BASE_URL=https://andreas-ahop.onrender.com` en Render. Si cambia el dominio del servicio, actualiza ese valor y vuelve a desplegar.
 
@@ -195,6 +198,6 @@ Esta es una base funcional para personalizar, no una plataforma auditada para op
 
 ## Cuentas de clientes y permisos
 
-La tienda tiene enlaces visibles a **Mi cuenta** y **Administración**. Los compradores pueden crear cuentas en `/cuenta/crear`; se guarda su correo y un hash de contraseña en la colección `users`. Al comprar mientras están conectados, el pedido incluye el identificador de la cuenta, para que aparezca en su historial. Los pedidos realizados sin iniciar sesión no se asocian retroactivamente a una cuenta.
+La tienda tiene enlaces visibles a **Mi cuenta** y **Administración**. Los compradores pueden crear cuentas en `/cuenta/crear`; se guarda su correo y un hash de contraseña en la colección `users`. Comprar requiere iniciar sesión: tanto la página de checkout como el endpoint que crea el pedido verifican la sesión en el servidor. Después del acceso se regresa al checkout y el pedido incluye el identificador de la cuenta para que aparezca en su historial.
 
 El registro público solo crea cuentas de cliente. Nunca crea administradores. La administración se autentica exclusivamente con `ADMIN_USERNAME` y `ADMIN_PASSWORD` establecidos en las variables de entorno; las rutas que crean, editan o desactivan productos y cambian pedidos requieren una sesión de administrador. Mantén `ADMIN_PASSWORD` fuerte: `4` solo sirve como configuración inicial de prueba y no es segura para producción. Cambia la contraseña antes de aceptar compras reales.

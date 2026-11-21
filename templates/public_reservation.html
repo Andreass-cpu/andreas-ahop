@@ -12,7 +12,7 @@
   </section>
   <section class="public-items-list">
     <h2>Artículos apartados</h2>
-    {% for item in reservation.items %}<article class="public-item-row"><img src="{{ item.image or url_for('static', filename='images/product-placeholder.svg') }}" alt="{{ item.name }}" onerror="this.onerror=null;this.src='{{ url_for('static', filename='images/product-placeholder.svg') }}'"><div><strong>{{ item.name }}</strong><small>Talla {{ item.size }} · Color {{ item.color }} · Cantidad {{ item.quantity }}</small></div><strong>${{ '%.2f'|format(item.price * item.quantity) }} MXN</strong></article>{% else %}<p>No hay artículos asociados a este folio.</p>{% endfor %}
+    {% for item in reservation.get('items', []) %}<article class="public-item-row"><img src="{{ item.image or url_for('static', filename='images/product-placeholder.svg') }}" alt="{{ item.name }}" onerror="this.onerror=null;this.src='{{ url_for('static', filename='images/product-placeholder.svg') }}'"><div><strong>{{ item.name }}</strong><small>Talla {{ item.size }} · Color {{ item.color }} · Cantidad {{ item.quantity }}</small></div><strong>${{ '%.2f'|format(item.price * item.quantity) }} MXN</strong></article>{% else %}<p>No hay artículos asociados a este folio.</p>{% endfor %}
   </section>
   <section class="qr-panel">
     <a class="qr-brand-badge" href="{{ url_for('index') }}" aria-label="VESTA, volver a la tienda"><img src="{{ url_for('static', filename='images/vesta-logo.svg') }}" alt="VESTA" class="vesta-logo-image"></a>

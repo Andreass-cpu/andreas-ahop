@@ -159,5 +159,8 @@
   document.getElementById('searchToggle')?.addEventListener('click', () => { document.getElementById('ropa-normal')?.scrollIntoView({behavior:'smooth'}); if(searchBox) searchBox.classList.add('search-open'); search?.focus({preventScroll:true}); });
   document.getElementById('newsletterForm')?.addEventListener('submit', event => { event.preventDefault(); toast('¡Gracias! El formulario de novedades es una demostración.'); event.target.reset(); });
   updateCount(); refreshReservation();
+  window.addEventListener('pageshow', event => {
+    if (event.persisted) refreshReservation();
+  });
   setInterval(() => { if (!document.hidden) refreshCatalogAvailability(); }, 12000);
 })();
